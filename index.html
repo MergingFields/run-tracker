@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>Run Tracker</title>
-<link rel="manifest" href="manifest.json">
+    <link rel="manifest" href="manifest.json">
     
     <link rel="apple-touch-icon" href="icon-192.png">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -12,6 +12,7 @@
     <meta name="theme-color" content="#000000">
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
     <style>
         body { margin: 0; padding: 0; font-family: sans-serif; }
@@ -43,6 +44,12 @@
         <button id="btn-start" onclick="toggleTracking(true)">Start Run</button>
         <button id="btn-stop" onclick="toggleTracking(false)">Stop Run</button>
         <button id="btn-download" onclick="downloadRun()" style="background: #333; color: white; display: none;">Download Run Data</button>
+        
+       <button id="btn-chart" onclick="toggleCharts()" style="background: #2196F3; color: white; display: none; margin-top: 10px;">Show Charts</button>
+
+       <div id="chart-container" style="display: none; width: 100%; height: 300px; margin-top: 20px; background: white; padding: 5px; border-radius: 8px;">
+          <canvas id="runChart"></canvas>
+       </div>
         
         <input type="file" id="camera-input" accept="image/*" capture="environment" onchange="handlePhoto(this)">
         <button id="btn-photo" onclick="document.getElementById('camera-input').click()">Take Photo</button>
@@ -104,6 +111,8 @@
                 btnStart.innerText = "Resume Run"; // Change text to Resume
                 btnStop.style.display = 'none';
                 btnDownload.style.display = 'block'; // Show download button
+                // adding
+                document.getElementById('btn-chart').style.display = 'block';
                 
                 if (watchID) navigator.geolocation.clearWatch(watchID);
                 watchID = null;
@@ -192,7 +201,7 @@
             }
         }
 
-        // --- 5. EXPORT LOGIC (NEW) ---
+        // --- 5. EXPORT LOGIC  ---
         function downloadRun() {
             const dataObj = {
                 date: new Date().toISOString(),
@@ -210,6 +219,86 @@
             downloadAnchor.click();
             downloadAnchor.remove();
         }
+
+        // --- 6. CHART LOGIC ---
+let myChart = null;
+
+function toggleCharts() {
+    const container = document.getElementById('chart-container');
+    const btn = document.getElementById('btn-chart');
+    
+    if (container.style.display === 'none') {
+        container.style.display = 'block';
+        btn.innerText = "Hide Charts";
+        renderChart(); // Draw the chart when opening
+    } else {
+        container.style.display = 'none';
+        btn.innerText = "Show Charts";
+    }
+}
+
+function renderChart() {
+    const ctx = document.getElementById('runChart').getContext('2d');
+    
+    // 1. Prepare Data
+    // We map the 'trackData' array into arrays for the chart
+    const labels = trackData.map(p => p.time + 's'); // X-Axis (Time)
+    const velData = trackData.map(p => p.vel);       // Y-Axis 1 (Velocity)
+    const accData = trackData.map(p => p.acc);       // Y-Axis 2 (Acceleration)
+
+    // Destroy previous chart if it exists (so we don't draw on top of old ones)
+    if (myChart) myChart.destroy();
+
+    // 2. Create Chart
+    myChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Velocity (m/s)',
+                    data: velData,
+                    borderColor: 'blue',
+                    yAxisID: 'y',
+                    tension: 0.4, // Smooth curves
+                    pointRadius: 0 // Hide dots for cleaner look
+                },
+                {
+                    label: 'Acceleration (m/s²)',
+                    data: accData,
+                    borderColor: 'red',
+                    yAxisID: 'y1',
+                    tension: 0.4,
+                    pointRadius: 0,
+                    borderDash: [5, 5] // Dashed line for acceleration
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
+            scales: {
+                y: {
+                    type: 'linear',
+                    display: true,
+                    position: 'left',
+                    title: { display: true, text: 'Velocity' }
+                },
+                y1: {
+                    type: 'linear',
+                    display: true,
+                    position: 'right',
+                    title: { display: true, text: 'Acceleration' },
+                    grid: { drawOnChartArea: false } // Only show grid for velocity
+                }
+            }
+        }
+    });
+}
     </script>
 
 </body>
