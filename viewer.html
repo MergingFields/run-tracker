@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Run Viewer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; }
+        #controls { padding: 20px; background: #333; color: white; display: flex; justify-content: space-between; align-items: center; }
+        #map { flex-grow: 1; min-height: 50vh; }
+        #charts { height: 30vh; background: white; padding: 10px; border-top: 2px solid #ccc; }
+        input[type="file"] { color: white; }
+    </style>
+</head>
+<body>
+
+    <div id="controls">
+        <div>
+            <h2>Run Visualizer</h2>
+            <input type="file" id="fileInput" accept=".json">
+        </div>
+        <div id="stats" style="text-align: right; font-size: 0.9em;">
+            Upload a JSON file to see stats.
+        </div>
+    </div>
+
+    <div id="map"></div>
+    <div id="charts">
+        <canvas id="runChart"></canvas>
+    </div>
+
+    <script>
+        const map = L.map('map').setView([0, 0], 2);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OSM' }).addTo(map);
+        const pathLayer = L.polyline([], {color: 'blue', weight: 4}).addTo(map);
+        let myChart = null;
+
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const data = JSON.parse(event.target.result);
+                loadRun(data);
+            };
+            reader.readAsText(file);
+        });
+
+        function loadRun(data) {
+            // 1. Update Stats
+            document.getElementById('stats').innerHTML = `
+                <strong>Date:</strong> ${new Date(data.date).toLocaleString()}<br>
+                <strong>Distance:</strong> ${Math.round(data.total_dist)}m <br>
+                <strong>Duration:</strong> ${data.duration}
+            `;
+
+            // 2. Draw Map Path
+            const latlngs = data.track_points.map(p => [p.lat, p.lng]);
+            pathLayer.setLatLngs(latlngs);
+            if (latlngs.length > 0) map.fitBounds(pathLayer.getBounds());
+
+            // 3. Add Photos
+            if (data.photos) {
+                data.photos.forEach(photo => {
+                    const icon = L.divIcon({
+                        html: `<div style="background-image: url('${photo.src}'); width: 40px; height: 40px; background-size: cover; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 5px black;"></div>`,
+                        className: 'photo-marker',
+                        iconSize: [44, 44]
+                    });
+                    L.marker([photo.lat, photo.lng], {icon: icon})
+                        .addTo(map)
+                        .bindPopup(`<img src="${photo.src}" style="width:200px; border-radius: 8px;">`);
+                });
+            }
+
+            // 4. Draw Charts
+            const ctx = document.getElementById('runChart').getContext('2d');
+            const labels = data.track_points.map(p => p.time);
+            const vels = data.track_points.map(p => p.vel);
+            const accs = data.track_points.map(p => p.acc);
+
+            if (myChart) myChart.destroy();
+
+            myChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'Velocity (m/s)', data: vels, borderColor: 'blue', yAxisID: 'y', pointRadius: 0 },
+                        { label: 'Acceleration (m/s²)', data: accs, borderColor: 'red', yAxisID: 'y1', pointRadius: 0, borderDash: [5,5] }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    scales: {
+                        y: { position: 'left', title: {display:true, text: 'Velocity'} },
+                        y1: { position: 'right', grid: {drawOnChartArea: false}, title: {display:true, text: 'Acceleration'} }
+                    }
+                }
+            });
+        }
+    </script>
+</body>
+</html>
