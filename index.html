@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>Run Tracker</title>
+    
     <link rel="manifest" href="manifest.json">
     
     <link rel="apple-touch-icon" href="icon-192.png">
@@ -12,21 +13,31 @@
     <meta name="theme-color" content="#000000">
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
     <style>
-        body { margin: 0; padding: 0; font-family: sans-serif; }
-        #map { height: 60vh; width: 100%; }
-        #controls { height: 40vh; padding: 10px; background: #f4f4f4; box-sizing: border-box; overflow-y: scroll;}
-        .stat-box { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
-        .stat { background: white; padding: 10px; border-radius: 8px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .label { font-size: 0.8em; color: #666; }
-        .value { font-size: 1.2em; font-weight: bold; }
-        button { width: 100%; padding: 15px; font-size: 1.2em; border: none; border-radius: 8px; margin-bottom: 10px; cursor: pointer; }
-        #btn-start { background: #4CAF50; color: white; }
-        #btn-stop { background: #f44336; color: white; display: none; }
+        body { margin: 0; padding: 0; font-family: sans-serif; background: #f4f4f4; }
+        #map { height: 55vh; width: 100%; }
+        #controls { height: 45vh; padding: 15px; box-sizing: border-box; overflow-y: scroll; background: #fff; border-top: 1px solid #ccc; }
+        
+        .stat-box { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; }
+        .stat { background: #f8f9fa; padding: 10px; border-radius: 8px; text-align: center; border: 1px solid #eee; }
+        .label { font-size: 0.75em; color: #666; text-transform: uppercase; letter-spacing: 1px; }
+        .value { font-size: 1.4em; font-weight: bold; color: #333; }
+        
+        button { width: 100%; padding: 15px; font-size: 1.1em; border: none; border-radius: 8px; margin-bottom: 10px; cursor: pointer; font-weight: bold; transition: opacity 0.2s; }
+        button:active { opacity: 0.8; }
+        
+        #btn-start { background: #28a745; color: white; }
+        #btn-stop { background: #dc3545; color: white; display: none; }
+        #btn-photo { background: #007bff; color: white; }
+        #btn-download { background: #343a40; color: white; display: none; }
+        #btn-chart { background: #17a2b8; color: white; display: none; }
+        
         #camera-input { display: none; }
-        #btn-photo { background: #2196F3; color: white; }
+        
+        #chart-container { display: none; width: 100%; height: 250px; margin-top: 15px; margin-bottom: 30px; }
     </style>
 </head>
 <body>
@@ -43,19 +54,18 @@
 
         <button id="btn-start" onclick="toggleTracking(true)">Start Run</button>
         <button id="btn-stop" onclick="toggleTracking(false)">Stop Run</button>
-        <button id="btn-download" onclick="downloadRun()" style="background: #333; color: white; display: none;">Download Run Data</button>
-        
-       <button id="btn-chart" onclick="toggleCharts()" style="background: #2196F3; color: white; display: none; margin-top: 10px;">Show Charts</button>
-
-       <div id="chart-container" style="display: none; width: 100%; height: 300px; margin-top: 20px; background: white; padding: 5px; border-radius: 8px;">
-          <canvas id="runChart"></canvas>
-       </div>
         
         <input type="file" id="camera-input" accept="image/*" capture="environment" onchange="handlePhoto(this)">
         <button id="btn-photo" onclick="document.getElementById('camera-input').click()">Take Photo</button>
+        
+        <button id="btn-chart" onclick="toggleCharts()">Show Charts</button>
+        <button id="btn-download" onclick="downloadRun()">Download Data</button>
+        
+        <div id="chart-container">
+            <canvas id="runChart"></canvas>
+        </div>
     </div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
         // --- 1. SETUP MAP ---
         const map = L.map('map').setView([0, 0], 2);
@@ -63,10 +73,9 @@
             attribution: '© OpenStreetMap contributors'
         }).addTo(map);
 
-        const pathLayer = L.polyline([], {color: 'red', weight: 4}).addTo(map);
+        const pathLayer = L.polyline([], {color: '#dc3545', weight: 5}).addTo(map);
         
         // --- 2. DATA STORAGE ---
-        // We now store every single point to export later
         let trackData = []; 
         let photoData = [];
         
@@ -76,6 +85,7 @@
         let lastPos = null;
         let lastTime = null;
         let totalDistance = 0;
+        let myChart = null;
         
         // --- 3. TRACKING LOGIC ---
         function toggleTracking(start) {
@@ -83,36 +93,39 @@
             const btnStart = document.getElementById('btn-start');
             const btnStop = document.getElementById('btn-stop');
             const btnDownload = document.getElementById('btn-download');
+            const btnChart = document.getElementById('btn-chart');
 
             if (start) {
-                // Reset if starting fresh
+                // Starting Fresh? Reset data
                 if (!startTime) {
                     startTime = Date.now();
                     trackData = [];
                     photoData = [];
                     pathLayer.setLatLngs([]);
                     totalDistance = 0;
+                    document.getElementById('dist').innerText = "0";
                 }
 
                 btnStart.style.display = 'none';
                 btnStop.style.display = 'block';
                 btnDownload.style.display = 'none';
+                btnChart.style.display = 'none';
+                document.getElementById('chart-container').style.display = 'none';
                 
                 if (navigator.geolocation) {
                     watchID = navigator.geolocation.watchPosition(
                         updatePosition, 
                         (err) => console.error(err), 
-                        { enableHighAccuracy: true }
+                        { enableHighAccuracy: true, maximumAge: 1000 }
                     );
                 }
             } else {
                 // STOPPED
                 btnStart.style.display = 'block';
-                btnStart.innerText = "Resume Run"; // Change text to Resume
+                btnStart.innerText = "Resume Run";
                 btnStop.style.display = 'none';
-                btnDownload.style.display = 'block'; // Show download button
-                // adding
-                document.getElementById('btn-chart').style.display = 'block';
+                btnDownload.style.display = 'block';
+                btnChart.style.display = 'block';
                 
                 if (watchID) navigator.geolocation.clearWatch(watchID);
                 watchID = null;
@@ -130,14 +143,17 @@
             if (lastPos && lastTime) {
                 const timeDiff = (currentTime - lastTime) / 1000; 
                 const v_prev = lastPos.speed || 0;
-                if (timeDiff > 0) {
+                
+                // Filter out impossible jumps (GPS noise)
+                if (timeDiff > 0 && timeDiff < 10) { 
                     acceleration = (v_current - v_prev) / timeDiff;
+                    
+                    const distStep = map.distance([lastPos.latitude, lastPos.longitude], [lat, lng]);
+                    totalDistance += distStep;
                 }
-                const distStep = map.distance([lastPos.latitude, lastPos.longitude], [lat, lng]);
-                totalDistance += distStep;
             }
 
-            // UI Updates
+            // Update UI
             document.getElementById('vel').innerText = v_current.toFixed(1);
             document.getElementById('acc').innerText = acceleration.toFixed(2);
             document.getElementById('dist').innerText = Math.round(totalDistance);
@@ -149,9 +165,8 @@
 
             // Map & Storage
             pathLayer.addLatLng([lat, lng]);
-            map.setView([lat, lng], 16);
+            map.setView([lat, lng], 18);
 
-            // SAVE DATA POINT
             trackData.push({
                 time: elapsed,
                 lat: lat,
@@ -173,7 +188,6 @@
                 reader.onload = function(e) {
                     const imgData = e.target.result;
                     
-                    // Create Icon
                     const photoIcon = L.divIcon({
                         html: `<div style="background-image: url('${imgData}'); width: 40px; height: 40px; background-size: cover; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 5px black;"></div>`,
                         className: 'photo-marker',
@@ -181,27 +195,26 @@
                         iconAnchor: [22, 44]
                     });
 
-                    if (lastPos) {
-                        L.marker([lastPos.latitude, lastPos.longitude], {icon: photoIcon})
-                            .addTo(map)
-                            .bindPopup(`<img src="${imgData}" style="width:100px;">`);
-                        
-                        // SAVE PHOTO DATA
-                        photoData.push({
-                            lat: lastPos.latitude,
-                            lng: lastPos.longitude,
-                            src: imgData, // Note: This is a base64 string (large), but works for local JSON
-                            timestamp: Date.now()
-                        });
-                    } else {
-                        alert("No GPS fix yet.");
-                    }
+                    // Drop marker at current map center if GPS is fuzzy, or last known pos
+                    const lat = lastPos ? lastPos.latitude : map.getCenter().lat;
+                    const lng = lastPos ? lastPos.longitude : map.getCenter().lng;
+
+                    L.marker([lat, lng], {icon: photoIcon})
+                        .addTo(map)
+                        .bindPopup(`<img src="${imgData}" style="width:100px;">`);
+                    
+                    photoData.push({
+                        lat: lat,
+                        lng: lng,
+                        src: imgData, 
+                        timestamp: Date.now()
+                    });
                 }
                 reader.readAsDataURL(file);
             }
         }
 
-        // --- 5. EXPORT LOGIC  ---
+        // --- 5. EXPORT LOGIC ---
         function downloadRun() {
             const dataObj = {
                 date: new Date().toISOString(),
@@ -214,92 +227,76 @@
             const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(dataObj));
             const downloadAnchor = document.createElement('a');
             downloadAnchor.setAttribute("href", dataStr);
-            downloadAnchor.setAttribute("download", "run_data_" + new Date().toISOString().slice(0,10) + ".json");
+            downloadAnchor.setAttribute("download", "run_" + new Date().toISOString().slice(0,19).replace(/:/g,"-") + ".json");
             document.body.appendChild(downloadAnchor);
             downloadAnchor.click();
             downloadAnchor.remove();
         }
 
         // --- 6. CHART LOGIC ---
-let myChart = null;
-
-function toggleCharts() {
-    const container = document.getElementById('chart-container');
-    const btn = document.getElementById('btn-chart');
-    
-    if (container.style.display === 'none') {
-        container.style.display = 'block';
-        btn.innerText = "Hide Charts";
-        renderChart(); // Draw the chart when opening
-    } else {
-        container.style.display = 'none';
-        btn.innerText = "Show Charts";
-    }
-}
-
-function renderChart() {
-    const ctx = document.getElementById('runChart').getContext('2d');
-    
-    // 1. Prepare Data
-    // We map the 'trackData' array into arrays for the chart
-    const labels = trackData.map(p => p.time + 's'); // X-Axis (Time)
-    const velData = trackData.map(p => p.vel);       // Y-Axis 1 (Velocity)
-    const accData = trackData.map(p => p.acc);       // Y-Axis 2 (Acceleration)
-
-    // Destroy previous chart if it exists (so we don't draw on top of old ones)
-    if (myChart) myChart.destroy();
-
-    // 2. Create Chart
-    myChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: labels,
-            datasets: [
-                {
-                    label: 'Velocity (m/s)',
-                    data: velData,
-                    borderColor: 'blue',
-                    yAxisID: 'y',
-                    tension: 0.4, // Smooth curves
-                    pointRadius: 0 // Hide dots for cleaner look
-                },
-                {
-                    label: 'Acceleration (m/s²)',
-                    data: accData,
-                    borderColor: 'red',
-                    yAxisID: 'y1',
-                    tension: 0.4,
-                    pointRadius: 0,
-                    borderDash: [5, 5] // Dashed line for acceleration
-                }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: {
-                mode: 'index',
-                intersect: false,
-            },
-            scales: {
-                y: {
-                    type: 'linear',
-                    display: true,
-                    position: 'left',
-                    title: { display: true, text: 'Velocity' }
-                },
-                y1: {
-                    type: 'linear',
-                    display: true,
-                    position: 'right',
-                    title: { display: true, text: 'Acceleration' },
-                    grid: { drawOnChartArea: false } // Only show grid for velocity
-                }
+        function toggleCharts() {
+            const container = document.getElementById('chart-container');
+            const btn = document.getElementById('btn-chart');
+            
+            if (container.style.display === 'none' || container.style.display === '') {
+                container.style.display = 'block';
+                btn.innerText = "Hide Charts";
+                renderChart(); 
+                // Scroll to bottom so user sees the chart
+                document.getElementById('controls').scrollTop = document.getElementById('controls').scrollHeight;
+            } else {
+                container.style.display = 'none';
+                btn.innerText = "Show Charts";
             }
         }
-    });
-}
-    </script>
 
+        function renderChart() {
+            const ctx = document.getElementById('runChart').getContext('2d');
+            const labels = trackData.map(p => p.time + 's'); 
+            const velData = trackData.map(p => p.vel);      
+            const accData = trackData.map(p => p.acc);      
+
+            if (myChart) myChart.destroy();
+
+            myChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Velocity (m/s)',
+                            data: velData,
+                            borderColor: '#007bff',
+                            backgroundColor: 'rgba(0,123,255,0.1)',
+                            yAxisID: 'y',
+                            tension: 0.4,
+                            pointRadius: 0,
+                            fill: true
+                        },
+                        {
+                            label: 'Accel (m/s²)',
+                            data: accData,
+                            borderColor: '#dc3545',
+                            yAxisID: 'y1',
+                            tension: 0.4,
+                            pointRadius: 0,
+                            borderDash: [5, 5],
+                            borderWidth: 1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    scales: {
+                        x: { display: false }, // Hide X axis labels to save space on mobile
+                        y: { type: 'linear', display: true, position: 'left', min: 0 },
+                        y1: { type: 'linear', display: false, position: 'right', grid: { drawOnChartArea: false } }
+                    }
+                }
+            });
+        }
+    </script>
 </body>
 </html>
