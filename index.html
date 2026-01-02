@@ -36,28 +36,32 @@
 
         <button id="btn-start" onclick="toggleTracking(true)">Start Run</button>
         <button id="btn-stop" onclick="toggleTracking(false)">Stop Run</button>
+        <button id="btn-download" onclick="downloadRun()" style="background: #333; color: white; display: none;">Download Run Data</button>
         
         <input type="file" id="camera-input" accept="image/*" capture="environment" onchange="handlePhoto(this)">
         <button id="btn-photo" onclick="document.getElementById('camera-input').click()">Take Photo</button>
     </div>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
         // --- 1. SETUP MAP ---
-        const map = L.map('map').setView([0, 0], 2); // Default view until GPS kicks in
+        const map = L.map('map').setView([0, 0], 2);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '© OpenStreetMap contributors'
         }).addTo(map);
 
         const pathLayer = L.polyline([], {color: 'red', weight: 4}).addTo(map);
-        let markers = [];
-
-        // --- 2. VARIABLES ---
+        
+        // --- 2. DATA STORAGE ---
+        // We now store every single point to export later
+        let trackData = []; 
+        let photoData = [];
+        
         let watchID = null;
         let tracking = false;
         let startTime = null;
         let lastPos = null;
-        let lastTime = null; // timestamp of last point
+        let lastTime = null;
         let totalDistance = 0;
         
         // --- 3. TRACKING LOGIC ---
@@ -65,25 +69,36 @@
             tracking = start;
             const btnStart = document.getElementById('btn-start');
             const btnStop = document.getElementById('btn-stop');
+            const btnDownload = document.getElementById('btn-download');
 
             if (start) {
+                // Reset if starting fresh
+                if (!startTime) {
+                    startTime = Date.now();
+                    trackData = [];
+                    photoData = [];
+                    pathLayer.setLatLngs([]);
+                    totalDistance = 0;
+                }
+
                 btnStart.style.display = 'none';
                 btnStop.style.display = 'block';
-                startTime = Date.now();
+                btnDownload.style.display = 'none';
                 
-                // Start Watching Position
                 if (navigator.geolocation) {
                     watchID = navigator.geolocation.watchPosition(
                         updatePosition, 
                         (err) => console.error(err), 
                         { enableHighAccuracy: true }
                     );
-                } else {
-                    alert("Geolocation is not supported by this browser.");
                 }
             } else {
+                // STOPPED
                 btnStart.style.display = 'block';
+                btnStart.innerText = "Resume Run"; // Change text to Resume
                 btnStop.style.display = 'none';
+                btnDownload.style.display = 'block'; // Show download button
+                
                 if (watchID) navigator.geolocation.clearWatch(watchID);
                 watchID = null;
             }
@@ -93,31 +108,21 @@
             const lat = position.coords.latitude;
             const lng = position.coords.longitude;
             const currentTime = position.timestamp;
-            
-            // Current Velocity from GPS (meters/second)
-            // If null (stationary), treat as 0
             let v_current = position.coords.speed || 0; 
-
-            // Calculate Acceleration
             let acceleration = 0;
+
+            // Physics Calculations
             if (lastPos && lastTime) {
-                const timeDiff = (currentTime - lastTime) / 1000; // seconds
+                const timeDiff = (currentTime - lastTime) / 1000; 
                 const v_prev = lastPos.speed || 0;
-                
                 if (timeDiff > 0) {
-                    // a = (v_final - v_initial) / time
                     acceleration = (v_current - v_prev) / timeDiff;
                 }
-                
-                // Calculate distance step (Haversine or simple Leaflet distance)
-                const distStep = map.distance(
-                    [lastPos.latitude, lastPos.longitude], 
-                    [lat, lng]
-                );
+                const distStep = map.distance([lastPos.latitude, lastPos.longitude], [lat, lng]);
                 totalDistance += distStep;
             }
 
-            // Update UI
+            // UI Updates
             document.getElementById('vel').innerText = v_current.toFixed(1);
             document.getElementById('acc').innerText = acceleration.toFixed(2);
             document.getElementById('dist').innerText = Math.round(totalDistance);
@@ -127,11 +132,19 @@
             const secs = (elapsed % 60).toString().padStart(2, '0');
             document.getElementById('time').innerText = `${mins}:${secs}`;
 
-            // Update Map
+            // Map & Storage
             pathLayer.addLatLng([lat, lng]);
             map.setView([lat, lng], 16);
 
-            // Store for next loop
+            // SAVE DATA POINT
+            trackData.push({
+                time: elapsed,
+                lat: lat,
+                lng: lng,
+                vel: v_current,
+                acc: acceleration
+            });
+
             lastPos = { latitude: lat, longitude: lng, speed: v_current };
             lastTime = currentTime;
         }
@@ -143,27 +156,55 @@
                 const reader = new FileReader();
 
                 reader.onload = function(e) {
-                    // Create a small icon from the photo
+                    const imgData = e.target.result;
+                    
+                    // Create Icon
                     const photoIcon = L.divIcon({
-                        html: `<div style="background-image: url('${e.target.result}'); width: 40px; height: 40px; background-size: cover; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 5px black;"></div>`,
+                        html: `<div style="background-image: url('${imgData}'); width: 40px; height: 40px; background-size: cover; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 5px black;"></div>`,
                         className: 'photo-marker',
                         iconSize: [44, 44],
                         iconAnchor: [22, 44]
                     });
 
-                    // Drop marker at CURRENT GPS location
-                    // (Ideally, use lastPos, but we need to ensure we have a fix)
                     if (lastPos) {
                         L.marker([lastPos.latitude, lastPos.longitude], {icon: photoIcon})
                             .addTo(map)
-                            .bindPopup(`<img src="${e.target.result}" style="width:100px;">`);
+                            .bindPopup(`<img src="${imgData}" style="width:100px;">`);
+                        
+                        // SAVE PHOTO DATA
+                        photoData.push({
+                            lat: lastPos.latitude,
+                            lng: lastPos.longitude,
+                            src: imgData, // Note: This is a base64 string (large), but works for local JSON
+                            timestamp: Date.now()
+                        });
                     } else {
-                        alert("Start tracking to get a GPS fix before taking photos!");
+                        alert("No GPS fix yet.");
                     }
                 }
                 reader.readAsDataURL(file);
             }
         }
+
+        // --- 5. EXPORT LOGIC (NEW) ---
+        function downloadRun() {
+            const dataObj = {
+                date: new Date().toISOString(),
+                total_dist: totalDistance,
+                duration: document.getElementById('time').innerText,
+                track_points: trackData,
+                photos: photoData
+            };
+
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(dataObj));
+            const downloadAnchor = document.createElement('a');
+            downloadAnchor.setAttribute("href", dataStr);
+            downloadAnchor.setAttribute("download", "run_data_" + new Date().toISOString().slice(0,10) + ".json");
+            document.body.appendChild(downloadAnchor);
+            downloadAnchor.click();
+            downloadAnchor.remove();
+        }
     </script>
+
 </body>
 </html>
