@@ -32,7 +32,10 @@
         #btn-start { background: #28a745; color: white; }
         #btn-stop { background: #dc3545; color: white; display: none; }
         #btn-photo { background: #007bff; color: white; }
+        
+        /* Hidden by default */
         #btn-download { background: #343a40; color: white; display: none; }
+        #btn-download-safe { background: #6c757d; color: white; display: none; font-size: 0.9em; }
         #btn-chart { background: #17a2b8; color: white; display: none; }
         
         #camera-input { display: none; }
@@ -59,7 +62,8 @@
         <button id="btn-photo" onclick="document.getElementById('camera-input').click()">Take Photo</button>
         
         <button id="btn-chart" onclick="toggleCharts()">Show Charts</button>
-        <button id="btn-download" onclick="downloadRun()">Download Data</button>
+        <button id="btn-download" onclick="downloadRun(true)">Download Full Data (Photos)</button>
+        <button id="btn-download-safe" onclick="downloadRun(false)">Save Track Only (Safe Mode)</button>
         
         <div id="chart-container">
             <canvas id="runChart"></canvas>
@@ -93,6 +97,7 @@
             const btnStart = document.getElementById('btn-start');
             const btnStop = document.getElementById('btn-stop');
             const btnDownload = document.getElementById('btn-download');
+            const btnDownloadSafe = document.getElementById('btn-download-safe');
             const btnChart = document.getElementById('btn-chart');
 
             if (start) {
@@ -108,7 +113,10 @@
 
                 btnStart.style.display = 'none';
                 btnStop.style.display = 'block';
+                
+                // Hide post-run buttons while running
                 btnDownload.style.display = 'none';
+                btnDownloadSafe.style.display = 'none';
                 btnChart.style.display = 'none';
                 document.getElementById('chart-container').style.display = 'none';
                 
@@ -124,7 +132,10 @@
                 btnStart.style.display = 'block';
                 btnStart.innerText = "Resume Run";
                 btnStop.style.display = 'none';
+                
+                // Show post-run buttons
                 btnDownload.style.display = 'block';
+                btnDownloadSafe.style.display = 'block';
                 btnChart.style.display = 'block';
                 
                 if (watchID) navigator.geolocation.clearWatch(watchID);
@@ -139,21 +150,17 @@
             let v_current = position.coords.speed || 0; 
             let acceleration = 0;
 
-            // Physics Calculations
             if (lastPos && lastTime) {
                 const timeDiff = (currentTime - lastTime) / 1000; 
                 const v_prev = lastPos.speed || 0;
                 
-                // Filter out impossible jumps (GPS noise)
                 if (timeDiff > 0 && timeDiff < 10) { 
                     acceleration = (v_current - v_prev) / timeDiff;
-                    
                     const distStep = map.distance([lastPos.latitude, lastPos.longitude], [lat, lng]);
                     totalDistance += distStep;
                 }
             }
 
-            // Update UI
             document.getElementById('vel').innerText = v_current.toFixed(1);
             document.getElementById('acc').innerText = acceleration.toFixed(2);
             document.getElementById('dist').innerText = Math.round(totalDistance);
@@ -163,7 +170,6 @@
             const secs = (elapsed % 60).toString().padStart(2, '0');
             document.getElementById('time').innerText = `${mins}:${secs}`;
 
-            // Map & Storage
             pathLayer.addLatLng([lat, lng]);
             map.setView([lat, lng], 18);
 
@@ -195,7 +201,6 @@
                         iconAnchor: [22, 44]
                     });
 
-                    // Drop marker at current map center if GPS is fuzzy, or last known pos
                     const lat = lastPos ? lastPos.latitude : map.getCenter().lat;
                     const lng = lastPos ? lastPos.longitude : map.getCenter().lng;
 
@@ -214,23 +219,30 @@
             }
         }
 
-        // --- 5. EXPORT LOGIC ---
-        function downloadRun() {
+        // --- 5. EXPORT LOGIC (FIXED) ---
+        function downloadRun(includePhotos) {
             const dataObj = {
                 date: new Date().toISOString(),
                 total_dist: totalDistance,
                 duration: document.getElementById('time').innerText,
                 track_points: trackData,
-                photos: photoData
+                photos: includePhotos ? photoData : [] 
             };
 
-            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(dataObj));
-            const downloadAnchor = document.createElement('a');
-            downloadAnchor.setAttribute("href", dataStr);
-            downloadAnchor.setAttribute("download", "run_" + new Date().toISOString().slice(0,19).replace(/:/g,"-") + ".json");
-            document.body.appendChild(downloadAnchor);
-            downloadAnchor.click();
-            downloadAnchor.remove();
+            // Use BLOB to handle large data without crashing
+            const jsonStr = JSON.stringify(dataObj);
+            const blob = new Blob([jsonStr], {type: "application/json"});
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = "run_" + (includePhotos ? "full_" : "track_") + new Date().toISOString().slice(0,19).replace(/:/g,"-") + ".json";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            
+            // Clean up memory
+            setTimeout(() => URL.revokeObjectURL(url), 100);
         }
 
         // --- 6. CHART LOGIC ---
@@ -242,7 +254,6 @@
                 container.style.display = 'block';
                 btn.innerText = "Hide Charts";
                 renderChart(); 
-                // Scroll to bottom so user sees the chart
                 document.getElementById('controls').scrollTop = document.getElementById('controls').scrollHeight;
             } else {
                 container.style.display = 'none';
@@ -290,7 +301,7 @@
                     maintainAspectRatio: false,
                     interaction: { mode: 'index', intersect: false },
                     scales: {
-                        x: { display: false }, // Hide X axis labels to save space on mobile
+                        x: { display: false },
                         y: { type: 'linear', display: true, position: 'left', min: 0 },
                         y1: { type: 'linear', display: false, position: 'right', grid: { drawOnChartArea: false } }
                     }
