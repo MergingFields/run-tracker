@@ -64,6 +64,9 @@
         <button id="btn-chart" onclick="toggleCharts()">Show Charts</button>
         <button id="btn-download" onclick="downloadRun(true)">Download Full Data (Photos)</button>
         <button id="btn-download-safe" onclick="downloadRun(false)">Save Track Only (Safe Mode)</button>
+
+        <button id="btn-save-reset" onclick="saveAndReset()" style="background-color: #d9534f; color: white;">Save & New Session</button>
+
         
         <div id="chart-container">
             <canvas id="runChart"></canvas>
@@ -244,7 +247,20 @@
             // Clean up memory
             setTimeout(() => URL.revokeObjectURL(url), 100);
         }
-
+        // --- SAVE & RESET FUNCTION ---
+        function saveAndReset() {
+            // 1. Trigger the download and set input argument to true to ensure photos are saved
+            downloadRun(true); 
+            
+            // 2. Wait a moment to ensure the download handoff begins, then refresh
+            setTimeout(() => {
+                // use a confirm box to prevent accidental refreshing if the download doesn't work
+                if(confirm("Did the file download start? Press OK to clear memory for the next run.")) {
+                    window.location.reload(); // This performs the "Flush"
+                }
+            }, 1000); // 1 second delay
+        }
+        
         // --- 6. CHART LOGIC ---
         function toggleCharts() {
             const container = document.getElementById('chart-container');
