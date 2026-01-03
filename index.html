@@ -26,7 +26,10 @@
         .label { font-size: 0.75em; color: #666; text-transform: uppercase; letter-spacing: 1px; }
         .value { font-size: 1.4em; font-weight: bold; color: #333; }
         
-        button { width: 100%; padding: 15px; font-size: 1.1em; border: none; border-radius: 8px; margin-bottom: 10px; cursor: pointer; font-weight: bold; transition: opacity 0.2s; }
+        /* Update button slightly to fit grid */
+        button { width: 100%; padding: 15px; font-size: 1em; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; }
+        /* NEW: Grid for side-by-side buttons */
+        .button-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
         button:active { opacity: 0.8; }
         
         #btn-start { background: #28a745; color: white; }
@@ -55,18 +58,20 @@
             <div class="stat"><div class="label">Accel (m/s²)</div><div class="value" id="acc">0.0</div></div>
         </div>
 
-        <button id="btn-start" onclick="toggleTracking(true)">Start Run</button>
-        <button id="btn-stop" onclick="toggleTracking(false)">Stop Run</button>
-        
-        <input type="file" id="camera-input" accept="image/*" capture="environment" onchange="handlePhoto(this)">
-        <button id="btn-photo" onclick="document.getElementById('camera-input').click()">Take Photo</button>
-        
-        <button id="btn-chart" onclick="toggleCharts()">Show Charts</button>
-        <button id="btn-download" onclick="downloadRun(true)">Download Full Data (Photos)</button>
-        <button id="btn-download-safe" onclick="downloadRun(false)">Save Track Only (Safe Mode)</button>
+    <button id="btn-start" onclick="toggleTracking(true)">Start Run</button>
+    <button id="btn-stop" onclick="toggleTracking(false)">Stop Run</button>
 
-        <button id="btn-save-reset" onclick="saveAndReset()" style="background-color: #d9534f; color: white;">Save & New Session</button>
+    <input type="file" id="camera-input" accept="image/*" capture="environment" onchange="handlePhoto(this)">
+    <button id="btn-photo" onclick="document.getElementById('camera-input').click()">Take Photo</button>
 
+    <button id="btn-chart" onclick="toggleCharts()">Show Charts</button>
+
+    <div class="button-grid">
+        <button id="btn-download" onclick="downloadRun(true)">Save Full (Partial)</button>
+        <button id="btn-download-safe" onclick="downloadRun(false)">Save Track (Partial)</button>
+    </div>
+
+    <button id="btn-save-reset" onclick="saveAndReset()" style="background-color: #d9534f; color: white;">End Session & Reset</button>
         
         <div id="chart-container">
             <canvas id="runChart"></canvas>
@@ -93,6 +98,8 @@
         let lastTime = null;
         let totalDistance = 0;
         let myChart = null;
+
+        let currentHeading = 0; // Stores compass direction (0-360)
         
         // --- 3. TRACKING LOGIC ---
         function toggleTracking(start) {
@@ -122,6 +129,19 @@
                 btnDownloadSafe.style.display = 'none';
                 btnChart.style.display = 'none';
                 document.getElementById('chart-container').style.display = 'none';
+                // Request Compass Permission (Required for iOS 13+)
+                if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    DeviceOrientationEvent.requestPermission()
+                    .then(response => {
+                        if (response === 'granted') {
+                            window.addEventListener('deviceorientation', handleOrientation);
+                        }
+                    })
+                    .catch(console.error);
+                } else {
+                    // Non-iOS devices usually just work
+                    window.addEventListener('deviceorientation', handleOrientation);
+                }
                 
                 if (navigator.geolocation) {
                     watchID = navigator.geolocation.watchPosition(
@@ -130,6 +150,7 @@
                         { enableHighAccuracy: true, maximumAge: 1000 }
                     );
                 }
+                
             } else {
                 // STOPPED
                 btnStart.style.display = 'block';
@@ -140,9 +161,21 @@
                 btnDownload.style.display = 'block';
                 btnDownloadSafe.style.display = 'block';
                 btnChart.style.display = 'block';
-                
+
+                // Stop listening to compass to save battery
+                window.removeEventListener('deviceorientation', handleOrientation);
                 if (watchID) navigator.geolocation.clearWatch(watchID);
                 watchID = null;
+            }
+        }
+
+        // NEW: Helper function to read compass
+        function handleOrientation(event) {
+            // iOS uses webkitCompassHeading, Android uses alpha
+            if (event.webkitCompassHeading) {
+                currentHeading = event.webkitCompassHeading;
+            } else if (event.alpha) {
+                currentHeading = 360 - event.alpha;
             }
         }
 
@@ -214,6 +247,7 @@
                     photoData.push({
                         lat: lat,
                         lng: lng,
+                        heading: Math.round(currentHeading || 0), //new
                         src: imgData, 
                         timestamp: Date.now()
                     });
@@ -223,30 +257,40 @@
         }
 
         // --- 5. EXPORT LOGIC (FIXED) ---
-        function downloadRun(includePhotos) {
-            const dataObj = {
-                date: new Date().toISOString(),
-                total_dist: totalDistance,
-                duration: document.getElementById('time').innerText,
-                track_points: trackData,
-                photos: includePhotos ? photoData : [] 
-            };
+    function downloadRun(includePhotos) {
+        const dataObj = {
+            date: new Date().toISOString(),
+            total_dist: totalDistance,
+            duration: document.getElementById('time').innerText,
+            track_points: trackData,
+            photos: includePhotos ? photoData : [] 
+        };
 
-            // Use BLOB to handle large data without crashing
-            const jsonStr = JSON.stringify(dataObj);
-            const blob = new Blob([jsonStr], {type: "application/json"});
-            const url = URL.createObjectURL(blob);
-            
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = "run_" + (includePhotos ? "full_" : "track_") + new Date().toISOString().slice(0,19).replace(/:/g,"-") + ".json";
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            
-            // Clean up memory
-            setTimeout(() => URL.revokeObjectURL(url), 100);
-        }
+        const jsonStr = JSON.stringify(dataObj);
+        const blob = new Blob([jsonStr], {type: "application/json"});
+        const url = URL.createObjectURL(blob);
+    
+        // NEW: Readable Timestamp for Filename (YYYY-MM-DD_HH-MM-SS)
+        const now = new Date();
+        const timeString = now.getFullYear() + "-" + 
+                      String(now.getMonth()+1).padStart(2, '0') + "-" + 
+                      String(now.getDate()).padStart(2, '0') + "_" + 
+                      String(now.getHours()).padStart(2, '0') + "-" + 
+                      String(now.getMinutes()).padStart(2, '0') + "-" + 
+                      String(now.getSeconds()).padStart(2, '0');
+
+        const type = includePhotos ? "FULL_DATA" : "TRACK_ONLY";
+        const filename = `Run_${timeString}_${type}.json`; // e.g., Run_2025-01-03_14-44-50_FULL_DATA.json
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    
+        setTimeout(() => URL.revokeObjectURL(url), 100);
+    }
         // --- SAVE & RESET FUNCTION ---
         function saveAndReset() {
             // 1. Trigger the download and set input argument to true to ensure photos are saved
