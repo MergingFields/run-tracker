@@ -1,35 +1,432 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
     <meta charset="utf-8">
-    <title>Run Viewer</title>
+    <title>Run Viewer 6.46 (Production)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="data:,">
+    
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <link rel="stylesheet" href="style.css">
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
     <style>
-        /* Viewer Specific Styles */
-        #viewer-controls { padding: 20px; background: white; border-bottom: 1px solid #ddd; }
-        #scrubber-container { margin-top: 15px; display: none; }
-        input[type=range] { width: 100%; }
-        #info-display { font-weight: bold; margin-top: 10px; color: #007bff; }
+        body { font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; background: #111; color: #eee; }
+        
+        #controls { padding: 10px; background: #222; border-bottom: 1px solid #444; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+        
+        /* Indicators */
+        .led { width: 10px; height: 10px; border-radius: 50%; background: #333; display: inline-block; border: 1px solid #000; }
+        .led.rx.on { background: #0f0; box-shadow: 0 0 8px #0f0; } 
+        .led.tx.on { background: #f00; box-shadow: 0 0 8px #f00; } 
+        
+        /* Toggles */
+        .toggle-label { font-size: 0.9em; color: #ccc; cursor: pointer; display: flex; align-items: center; gap: 5px; user-select: none; border: 1px solid #444; padding: 2px 6px; border-radius: 4px; }
+        .toggle-label:hover { background: #333; }
+        #lblScale { border-color: #4facfe; color: #4facfe; }
+
+        /* Manual Time Input */
+        #inpDuration { 
+            background: #333; border: 1px solid #555; color: #fff; 
+            width: 50px; padding: 2px; border-radius: 3px; text-align: center;
+        }
+        #inpDuration:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* BIG STATS */
+        .stats { 
+            font-family: monospace; 
+            font-size: 1.5em; 
+            margin-left: auto; 
+            text-align: right; 
+            line-height: 1.3; 
+            background: rgba(0,0,0,0.3);
+            padding: 10px 15px;
+            border-radius: 6px;
+            min-width: 180px; 
+        }
+        .val-blue { color: #4facfe; font-weight: bold; }
+        .val-red { color: #ff0055; font-weight: bold; }
+        .unit { font-size: 0.6em; color: #888; margin-left: 4px; }
+        
+        #map { flex-grow: 1; width: 100%; min-height: 0; background: #222; }
+        #charts-container { height: 40vh; background: #1a1a1a; position: relative; border-top: 1px solid #444; }
+        
+        /* CHART LEGEND */
+        .chart-legend {
+            position: absolute; top: 10px; left: 70px; 
+            background: rgba(0, 0, 0, 0.6); padding: 4px 8px; border-radius: 4px;
+            font-size: 0.85em; pointer-events: none; display: flex; gap: 15px;
+        }
+        .legend-item { display: flex; align-items: center; gap: 6px; }
+        .legend-box { width: 12px; height: 12px; display: inline-block; border: 1px solid rgba(255,255,255,0.3); }
+
+        /* SVG Elements */
+        #chart-svg { width: 100%; height: 100%; display: block; }
+        text { font-family: 'Segoe UI', sans-serif; font-size: 12px; fill: #888; }
+        .axis-title { font-weight: bold; font-size: 14px; }
+        .grid-line { stroke: #333; stroke-width: 1; vector-effect: non-scaling-stroke; }
+        .axis-line { stroke: #555; stroke-width: 1; }
+        
+        .line-vel { fill: none; stroke: #4facfe; stroke-width: 2; }
+        .line-acc { fill: none; stroke: #ff0055; stroke-width: 1.5; opacity: 0.8; }
+        .cursor-line { stroke: white; stroke-width: 1; pointer-events: none; }
+        .photo-dot { fill: #ffd700; stroke: #000; stroke-width: 1; cursor: pointer; }
+        
+        #chart-overlay { position: absolute; top:0; left:0; width:100%; height:100%; cursor: crosshair; }
+        
+        #scrubber-container { padding: 8px; background: #222; }
+        input[type=range] { width: 100%; cursor: pointer; accent-color: #4facfe; }
+        input[type="file"] { max-width: 180px; }
+        .hidden { display: none !important; }
+        .leaflet-popup-content img { cursor: pointer; border-radius: 4px; max-width: 200px; display: block; }
     </style>
 </head>
 <body>
 
-    <div id="viewer-controls">
-        <h3>Load Session Data</h3>
-        <input type="file" id="file-input" accept=".json" onchange="loadSession(this)">
-        <div id="loading-msg" style="display:none; color: orange;">Processing large file... please wait...</div>
+    <div id="controls">
+        <div style="display:flex; gap:5px; align-items:center;">
+            <div id="led-rx" class="led rx" title="RX"></div>
+            <div id="led-tx" class="led tx" title="TX"></div>
+        </div>
         
-        <div id="scrubber-container">
-            <label>Timeline Scrubber:</label>
-            <input type="range" id="time-slider" min="0" max="100" value="0" step="1">
-            <div id="info-display">Time: 00:00</div>
+        <label class="toggle-label"><input type="checkbox" id="chkSync" checked> Sync</label>
+        
+        <label class="toggle-label" id="lblScale" title="Scale run to fit specific duration">
+            <input type="checkbox" id="chkScale" checked> Fit to:
+        </label>
+        <input type="number" id="inpDuration" value="180" min="1" title="Target Duration (Seconds)">
+        
+        <label class="toggle-label" title="Units"><input type="checkbox" id="chkUnits" checked> km/h</label>
+        
+        <label class="toggle-label"><input type="checkbox" id="chkMap" checked> Map</label>
+        <label class="toggle-label"><input type="checkbox" id="chkChart" checked> Chart</label>
+        <label class="toggle-label"><input type="checkbox" id="chkAutoPhoto" checked> Auto</label>
+
+        <label class="toggle-label" style="color:#4facfe"><input type="checkbox" id="chkVel" checked> Vel</label>
+        <label class="toggle-label" style="color:#ff0055"><input type="checkbox" id="chkAcc" checked> Acc</label>
+
+        <input type="file" id="fileInput" accept=".json">
+        
+        <div class="stats">
+            <span id="syncTime">00:00</span> <br>
+            <span id="valVel" class="val-blue">0.0</span><span class="unit" id="unitVel">km/h</span> <br>
+            <span id="valAcc" class="val-red">0.0</span><span class="unit" id="unitAcc">km/h/s</span>
         </div>
     </div>
 
     <div id="map"></div>
+    
+    <div id="charts-container">
+        <div class="chart-legend">
+            <div class="legend-item"><div class="legend-box" style="background:#4facfe"></div> Speed</div>
+            <div class="legend-item"><div class="legend-box" style="background:#ff0055"></div> Accel</div>
+        </div>
+        <svg id="chart-svg" preserveAspectRatio="none"></svg>
+        <div id="chart-overlay"></div>
+    </div>
+    
+    <div id="scrubber-container"><input type="range" id="timeSlider" min="0" max="100" value="0" step="0.1"></div>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="viewer.js"></script>
+    <script>
+        const map = L.map('map').setView([0, 0], 2);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OSM' }).addTo(map);
+        const pathLayer = L.polyline([], {color: '#4facfe', weight: 4}).addTo(map);
+        const runnerMarker = L.circleMarker([0,0], { radius: 8, color: 'white', fillColor: '#ff0055', fillOpacity: 1 }).addTo(map);
+        
+        const syncChannel = new BroadcastChannel('song_sync_channel');
+        
+        let runData = null;
+        let photoMarkers = [];
+        let maxRunTime = 100;
+        let isDragging = false;
+        let lastReceive = 0;
+        
+        // VISUAL CONFIG
+        const V_W = 1000, V_H = 300;
+        const MARGIN = { top: 20, right: 60, bottom: 40, left: 60 };
+        const INNER_W = V_W - MARGIN.left - MARGIN.right;
+        const INNER_H = V_H - MARGIN.top - MARGIN.bottom;
+        const VISUAL_MAX_VEL_KMH = 30; 
+        const VISUAL_ACC_RNG_KMHS = 10;
+        const scaleX = (t) => MARGIN.left + (t / maxRunTime) * INNER_W;
+
+        // --- 1. DURATION LOGIC ---
+        function getTargetDuration() {
+            // Priority: Input Box Value (which Hub updates automatically)
+            let val = parseFloat(document.getElementById('inpDuration').value);
+            return (val > 0) ? val : 180; // Default 180s if invalid
+        }
+
+        function getScaleFactor() {
+            if (!document.getElementById('chkScale').checked || maxRunTime <= 0) return 1.0;
+            return getTargetDuration() / maxRunTime;
+        }
+
+        // --- 2. COMMS ---
+        function handleIncoming(data) {
+            if (!data.isHub || !data.type === 'time_update') return;
+            lastReceive = Date.now();
+            
+            // AUTO-SYNC DURATION: If Hub sends duration, update Input and Disable it
+            if (data.duration && data.duration > 0) {
+                const inp = document.getElementById('inpDuration');
+                if (parseFloat(inp.value) !== data.duration) {
+                    inp.value = Math.round(data.duration);
+                    // Flash to show it updated
+                    inp.style.borderColor = "#0f0"; setTimeout(()=>inp.style.borderColor="#555", 500);
+                }
+                inp.disabled = true; // Lock manual control while Hub is active
+            } else {
+                 document.getElementById('inpDuration').disabled = false;
+            }
+            
+            const songTime = parseFloat(data.time);
+            const factor = getScaleFactor();
+            const localTime = songTime / factor;
+
+            if (!isDragging && !isNaN(localTime)) {
+                const led = document.getElementById('led-rx');
+                led.classList.add('on'); setTimeout(() => led.classList.remove('on'), 100);
+                document.getElementById('timeSlider').value = localTime;
+                requestAnimationFrame(() => updateVisuals(localTime));
+            }
+        }
+        syncChannel.onmessage = (e) => { if(e.data) handleIncoming(e.data); };
+        window.addEventListener('message', (e) => { if(e.data) handleIncoming(e.data); });
+
+        // Fallback: Enable manual input if Hub goes silent
+        setInterval(() => {
+            if (Date.now() - lastReceive > 3000) {
+                document.getElementById('inpDuration').disabled = false;
+            } else if (window.opener && !window.opener.closed) {
+                window.opener.postMessage({ type: 'viewer_hello' }, '*');
+            }
+        }, 2000);
+
+        // --- 3. SENDING ---
+        function safeJump(localT) {
+            if (isNaN(localT) || !isFinite(localT) || localT === undefined) return;
+            slider.value = localT;
+            updateVisuals(localT);
+            
+            if (!document.getElementById('chkSync').checked) return;
+
+            const factor = getScaleFactor();
+            let songTime = localT * factor;
+            
+            // Clamp to Target Duration
+            const target = getTargetDuration();
+            if (songTime >= target) songTime = target - 0.5;
+
+            const led = document.getElementById('led-tx');
+            led.classList.add('on'); setTimeout(() => led.classList.remove('on'), 100);
+
+            const msg = { type: 'sync_time', time: songTime };
+            if (window.opener && !window.opener.closed) window.opener.postMessage(msg, '*');
+            syncChannel.postMessage(msg);
+        }
+
+        // --- 4. UI HANDLERS ---
+        const slider = document.getElementById('timeSlider');
+        slider.addEventListener('mousedown', () => isDragging = true);
+        slider.addEventListener('mouseup', () => { isDragging = false; safeJump(parseFloat(slider.value)); });
+        slider.addEventListener('input', function() { updateVisuals(parseFloat(this.value)); safeJump(parseFloat(this.value)); });
+
+        document.getElementById('chart-overlay').addEventListener('click', (e) => {
+            if(!runData) return;
+            const rect = e.target.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const t = ((clickX / rect.width * V_W - MARGIN.left) / INNER_W) * maxRunTime;
+            safeJump(Math.max(0, Math.min(t, maxRunTime)));
+        });
+
+        // Toggles
+        document.getElementById('chkMap').addEventListener('change', (e) => { document.getElementById('map').classList.toggle('hidden', !e.target.checked); map.invalidateSize(); });
+        document.getElementById('chkChart').addEventListener('change', (e) => { document.getElementById('charts-container').classList.toggle('hidden', !e.target.checked); });
+        document.getElementById('chkVel').addEventListener('change', (e) => { document.getElementById('path-vel').style.display = e.target.checked ? 'inline' : 'none'; });
+        document.getElementById('chkAcc').addEventListener('change', (e) => { document.getElementById('path-acc').style.display = e.target.checked ? 'inline' : 'none'; });
+        
+        // Redraw triggers
+        ['chkUnits', 'chkScale', 'inpDuration'].forEach(id => {
+            document.getElementById(id).addEventListener('change', () => {
+                if(runData) initVisualizer();
+                updateVisuals(parseFloat(slider.value));
+            });
+        });
+
+        // --- 5. DATA ---
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                try {
+                    const json = JSON.parse(event.target.result);
+                    const points = json.track_points || json.points || json;
+                    if (!Array.isArray(points)) throw new Error("No points");
+                    runData = { track_points: points, photos: json.photos || [] };
+                    initVisualizer();
+                } catch(err) { alert("Error: " + err.message); }
+            };
+            reader.readAsText(file);
+        });
+
+        function initVisualizer() {
+            if (!runData) return;
+            const points = runData.track_points;
+            photoMarkers = []; 
+            
+            // Map Fit
+            const latlngs = points.map(p => [p.lat||p.latitude, p.lng||p.longitude]);
+            if(latlngs.length > 0 && latlngs[0][0] != null) {
+                pathLayer.setLatLngs(latlngs);
+                map.fitBounds(pathLayer.getBounds());
+            }
+
+            maxRunTime = points[points.length-1].time || 100;
+            slider.max = maxRunTime;
+            
+            // --- DRAW CHART ---
+            const svg = document.getElementById('chart-svg');
+            svg.setAttribute('viewBox', `0 0 ${V_W} ${V_H}`);
+            svg.innerHTML = ''; 
+
+            const isKmh = document.getElementById('chkUnits').checked;
+            const scaleMult = isKmh ? 3.6 : 1.0;
+            const MAX_V = isKmh ? VISUAL_MAX_VEL_KMH : (VISUAL_MAX_VEL_KMH/3.6);
+            const RNG_A = isKmh ? VISUAL_ACC_RNG_KMHS : (VISUAL_ACC_RNG_KMHS/3.6);
+
+            const scaleVel = (v) => MARGIN.top + INNER_H - (v / MAX_V) * INNER_H;
+            const scaleAcc = (a) => MARGIN.top + INNER_H - ((a + RNG_A) / (RNG_A * 2)) * INNER_H;
+
+            const gAxis = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            const gData = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            const gDots = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            gDots.id = 'dots-layer';
+            svg.append(gAxis, gData, gDots);
+
+            // Axes
+            gAxis.innerHTML += `<line x1="${MARGIN.left}" y1="${V_H-MARGIN.bottom}" x2="${V_W-MARGIN.right}" y2="${V_H-MARGIN.bottom}" class="axis-line"/>`;
+            gAxis.innerHTML += `<line x1="${MARGIN.left}" y1="${MARGIN.top}" x2="${MARGIN.left}" y2="${V_H-MARGIN.bottom}" class="axis-line" stroke="#4facfe"/>`;
+            gAxis.innerHTML += `<text x="${MARGIN.left - 10}" y="${MARGIN.top + 10}" text-anchor="end" class="axis-title" fill="#4facfe">${isKmh ? "Speed (km/h)" : "Speed (m/s)"}</text>`;
+            gAxis.innerHTML += `<line x1="${V_W-MARGIN.right}" y1="${MARGIN.top}" x2="${V_W-MARGIN.right}" y2="${V_H-MARGIN.bottom}" class="axis-line" stroke="#ff0055"/>`;
+            gAxis.innerHTML += `<text x="${V_W-MARGIN.right + 10}" y="${MARGIN.top + 10}" text-anchor="start" class="axis-title" fill="#ff0055">${isKmh ? "Acc (km/h/s)" : "Acc (m/s²)"}</text>`;
+
+            // Paths
+            let dVel="", dAcc="";
+            points.forEach((p, i) => {
+                const x = scaleX(p.time);
+                
+                let v = (p.vel || 0) * scaleMult;
+                if(v > MAX_V) v = MAX_V; 
+                const yV = scaleVel(v);
+                
+                let a = (p.acc !== undefined ? p.acc : 0) * scaleMult;
+                if(a > RNG_A) a = RNG_A; if(a < -RNG_A) a = -RNG_A;
+                const yA = scaleAcc(a);
+                
+                const cmd = i===0?'M':'L';
+                dVel += `${cmd} ${x.toFixed(1)} ${yV.toFixed(1)}`;
+                dAcc += `${cmd} ${x.toFixed(1)} ${yA.toFixed(1)}`;
+            });
+
+            const pathVel = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            pathVel.setAttribute("d", dVel); pathVel.setAttribute("id", "path-vel"); pathVel.setAttribute("class", "line-vel");
+            gData.appendChild(pathVel);
+
+            const pathAcc = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            pathAcc.setAttribute("d", dAcc); pathAcc.setAttribute("id", "path-acc"); pathAcc.setAttribute("class", "line-acc");
+            gData.appendChild(pathAcc);
+
+            const scrub = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            scrub.setAttribute("id", "scrubber-line"); scrub.setAttribute("class", "cursor-line");
+            scrub.setAttribute("y1", MARGIN.top); scrub.setAttribute("y2", V_H - MARGIN.bottom);
+            gData.appendChild(scrub);
+            
+            // Photos
+            runData.photos.forEach(photo => {
+                let t = 0, minDist = Infinity;
+                const pLat = photo.lat || photo.latitude;
+                const pLng = photo.lng || photo.longitude;
+                points.forEach(p => {
+                    const d = Math.abs((p.lat||p.latitude) - pLat) + Math.abs((p.lng||p.longitude) - pLng);
+                    if(d < minDist) { minDist = d; t = p.time; }
+                });
+                if (isNaN(t)) return;
+
+                const cx = scaleX(t);
+                let v = (points.find(x=>x.time===t)?.vel || 0) * scaleMult;
+                if(v > MAX_V) v = MAX_V;
+                const cy = scaleVel(v);
+
+                const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                dot.setAttribute("cx", cx); dot.setAttribute("cy", cy); 
+                dot.setAttribute("r", 4); dot.setAttribute("class", "photo-dot");
+                dot.onclick = (e) => { e.stopPropagation(); safeJump(t); };
+                gDots.appendChild(dot);
+                
+                const imgSrc = photo.src_chunks ? photo.src_chunks.join('') : photo.src;
+                const icon = L.divIcon({ html: `<div style="background-image:url('${imgSrc}'); width:30px; height:30px; background-size:cover; border-radius:50%; border:2px solid white;"></div>`, iconSize:[34,34] });
+                const m = L.marker([pLat, pLng], {icon:icon}).addTo(map);
+                m.photoTimestamp = t;
+                photoMarkers.push(m);
+                m.on('click', () => safeJump(t));
+
+                const container = document.createElement('div');
+                const img = document.createElement('img');
+                img.src = imgSrc;
+                img.width = 200;
+                img.onclick = (e) => { e.stopPropagation(); e.preventDefault(); safeJump(t); };
+                container.appendChild(img);
+                m.bindPopup(container);
+            });
+        }
+
+        function updateVisuals(t) {
+            if (!runData) return;
+            const m = Math.floor(t/60); const s = Math.floor(t%60);
+            document.getElementById('syncTime').innerText = `${m}:${s.toString().padStart(2,'0')}`;
+            
+            const line = document.getElementById('scrubber-line');
+            if(line) { 
+                const x = MARGIN.left + (t / maxRunTime) * INNER_W;
+                line.setAttribute('x1', x); line.setAttribute('x2', x); 
+            }
+
+            if (document.getElementById('chkAutoPhoto').checked) {
+                let activeMarker = null;
+                for (let marker of photoMarkers) {
+                    if (Math.abs(marker.photoTimestamp - t) < 4.0) { activeMarker = marker; break; }
+                }
+                if (activeMarker) { if (!activeMarker.isPopupOpen()) activeMarker.openPopup(); } 
+                else { map.closePopup(); }
+            }
+
+            const points = runData.track_points;
+            let idx = -1;
+            for(let i=0; i < points.length-1; i++) {
+                if (t >= points[i].time && t < points[i+1].time) { idx = i; break; }
+            }
+            if (idx !== -1) {
+                const p1 = points[idx]; const p2 = points[idx+1];
+                const f = (t - p1.time) / (p2.time - p1.time);
+                
+                const lat = (p1.lat||p1.latitude) + ((p2.lat||p2.latitude) - (p1.lat||p1.latitude)) * f;
+                const lng = (p1.lng||p1.longitude) + ((p2.lng||p2.longitude) - (p1.lng||p1.longitude)) * f;
+                runnerMarker.setLatLng([lat, lng]);
+                
+                // UNIT CONVERSION
+                const isKmh = document.getElementById('chkUnits').checked;
+                const scaleMult = isKmh ? 3.6 : 1.0;
+                
+                const rawVel = p1.vel + (p2.vel - p1.vel) * f;
+                const rawAcc = (p1.acc||0) + ((p2.acc||0)-(p1.acc||0)) * f;
+
+                document.getElementById('valVel').innerText = (rawVel * scaleMult).toFixed(1);
+                document.getElementById('valAcc').innerText = (rawAcc * scaleMult).toFixed(2);
+                document.getElementById('unitVel').innerText = isKmh ? "km/h" : "m/s";
+                document.getElementById('unitAcc').innerText = isKmh ? "km/h/s" : "m/s²";
+            }
+        }
+    </script>
 </body>
 </html>
