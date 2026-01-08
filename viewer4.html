@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Run Viewer 4 (SVG & Smooth)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <style>
+        body { font-family: sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; background: #111; color: #eee; }
+        
+        /* HEADER / CONTROLS */
+        #controls { padding: 10px 15px; background: #222; border-bottom: 1px solid #444; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; }
+        .control-group { display: flex; gap: 15px; align-items: center; }
+        .toggle-label { font-size: 0.9em; color: #ccc; cursor: pointer; user-select: none; }
+        .stat-value { color: #4facfe; font-weight: bold; margin-left: 5px; }
+
+        /* LAYOUT */
+        #map-container { flex-grow: 1; position: relative; min-height: 0; }
+        #map { height: 100%; width: 100%; }
+        
+        /* SVG CHART CONTAINER */
+        #charts-container { height: 35vh; background: #1a1a1a; padding: 0; border-top: 1px solid #444; position: relative; overflow: hidden; }
+        #chart-svg { width: 100%; height: 100%; display: block; cursor: crosshair; }
+        
+        /* SVG STYLES */
+        .chart-line-vel { fill: none; stroke: #4facfe; stroke-width: 2; vector-effect: non-scaling-stroke; }
+        .chart-line-acc { fill: none; stroke: #ff0055; stroke-width: 1; stroke-dasharray: 4,4; vector-effect: non-scaling-stroke; opacity: 0.6; }
+        .chart-cursor { stroke: white; stroke-width: 1; vector-effect: non-scaling-stroke; }
+        .chart-photo-dot { fill: white; stroke: #1a1a1a; stroke-width: 1; cursor: pointer; transition: r 0.2s; }
+        .chart-photo-dot:hover { r: 8; fill: #ffd700; }
+
+        /* HIDE STATES */
+        .hidden { display: none !important; }
+        
+        /* PHOTO MARKERS ON MAP */
+        .photo-marker { transition: transform 0.2s; box-sizing: border-box; }
+        .photo-marker:hover { transform: scale(1.2); z-index: 1000 !important; }
+        .active-photo { border-color: #ffd700 !important; box-shadow: 0 0 15px #ffd700 !important; transform: scale(1.4); z-index: 9999 !important; }
+
+        /* SLIDER */
+        #scrubber-container { width: 100%; margin-top: 5px; }
+        input[type=range] { width: 100%; cursor: pointer; }
+        
+        input[type="file"]::file-selector-button {
+            background: #333; color: white; border: 1px solid #555; padding: 5px 10px; border-radius: 4px; cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="controls">
+        <div class="control-group">
+            <h2 style="margin:0; font-size: 1.1em;">🏃 View 4 (SVG)</h2>
+            <input type="file" id="fileInput" accept=".json">
+        </div>
+        
+        <div class="control-group">
+            <label class="toggle-label"><input type="checkbox" id="toggleMap" checked> Map</label>
+            <label class="toggle-label"><input type="checkbox" id="toggleChart" checked> Chart</label>
+            <label class="toggle-label"><input type="checkbox" id="toggleAcc"> Show Accel</label>
+        </div>
+
+        <div style="text-align: right; font-size: 0.85em; color: #aaa;">
+            <div>Time: <span id="syncTime" class="stat-value">--:--</span></div>
+            <div>Vel: <span id="syncVel" class="stat-value">0.0</span> m/s</div>
+        </div>
+        
+        <div id="scrubber-container">
+            <input type="range" id="timeSlider" min="0" max="100" value="0" step="0.1">
+        </div>
+    </div>
+
+    <div id="map-container">
+        <div id="map"></div>
+    </div>
+
+    <div id="charts-container">
+        <svg id="chart-svg" preserveAspectRatio="none">
+            <path id="path-vel" class="chart-line-vel" d="" />
+            <path id="path-acc" class="chart-line-acc" d="" style="display:none;" />
+            <line id="scrubber-line" class="chart-cursor" x1="0" y1="0" x2="0" y2="100%" />
+            <g id="photo-dots-layer"></g>
+        </svg>
+    </div>
+
+    <script>
+        // --- CONFIG ---
+        const map = L.map('map').setView([0, 0], 2);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { 
+            attribution: '© OSM', className: 'map-tiles' 
+        }).addTo(map);
+        document.querySelector('.map-tiles').style.filter = "invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%)";
+
+        const pathLayer = L.polyline([], {color: '#4facfe', weight: 4}).addTo(map);
+        const runnerMarker = L.circleMarker([0,0], { radius: 8, color: 'white', fillColor: '#ff0055', fillOpacity: 1 }).addTo(map);
+        
+        let runData = null;
+        let photoMarkers = []; 
+        let maxRunTime = 0;
+        let maxVel = 0;
+
+        // --- 1. UI TOGGLES ---
+        document.getElementById('toggleMap').addEventListener('change', (e) => {
+            const el = document.getElementById('map-container');
+            if(e.target.checked) el.classList.remove('hidden'); else el.classList.add('hidden');
+            map.invalidateSize();
+        });
+        document.getElementById('toggleChart').addEventListener('change', (e) => {
+            const el = document.getElementById('charts-container');
+            if(e.target.checked) el.classList.remove('hidden'); else el.classList.add('hidden');
+        });
+        document.getElementById('toggleAcc').addEventListener('change', (e) => {
+            const el = document.getElementById('path-acc');
+            if(e.target.checked) el.style.display = 'block'; else el.style.display = 'none';
+        });
+
+        // --- 2. LOAD FILE ---
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                try {
+                    runData = JSON.parse(event.target.result);
+                    initVisualizer(runData);
+                } catch (err) { alert("Error parsing JSON."); }
+            };
+            reader.readAsText(file);
+        });
+
+        // --- 3. INIT VISUALIZER ---
+        function initVisualizer(data) {
+            // A. PATH & SLIDER
+            const latlngs = data.track_points.map(p => [p.lat, p.lng]);
+            pathLayer.setLatLngs(latlngs);
+            if (latlngs.length > 0) {
+                map.fitBounds(pathLayer.getBounds());
+                runnerMarker.setLatLng(latlngs[0]);
+            }
+            
+            maxRunTime = data.track_points[data.track_points.length - 1].time;
+            const slider = document.getElementById('timeSlider');
+            slider.max = maxRunTime;
+            slider.value = 0;
+
+            // Calc Max Velocity for Y-Scaling
+            maxVel = 0;
+            data.track_points.forEach(p => { if(p.vel > maxVel) maxVel = p.vel; });
+            if(maxVel === 0) maxVel = 1; // prevent divide by zero
+
+            // B. DRAW SVG CHART
+            drawSvgChart(data);
+
+            // C. PHOTOS (MAP MARKERS)
+            photoMarkers = []; // clear old
+            if (data.photos) {
+                data.photos.forEach(photo => {
+                    let imgSrc = photo.src_chunks ? photo.src_chunks.join('') : photo.src;
+                    
+                    // Match Time
+                    let closestTime = 0;
+                    let minDist = Infinity;
+                    
+                    data.track_points.forEach(p => {
+                        const d = Math.sqrt(Math.pow(p.lat - photo.lat, 2) + Math.pow(p.lng - photo.lng, 2));
+                        if(d < minDist) { minDist = d; closestTime = p.time; }
+                    });
+
+                    // Map Marker
+                    const icon = L.divIcon({
+                        html: `<div style="background-image: url('${imgSrc}'); width: 30px; height: 30px; background-size: cover; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 5px black;"></div>`,
+                        className: 'photo-marker',
+                        iconSize: [34, 34], iconAnchor: [17, 34]
+                    });
+                    const marker = L.marker([photo.lat, photo.lng], {icon: icon}).addTo(map);
+                    const headingStr = photo.heading ? `<br>Heading: ${photo.heading}°` : "";
+                    marker.bindPopup(`<img src="${imgSrc}" style="width:200px; border-radius: 8px;">${headingStr}`);
+                    
+                    photoMarkers.push({ marker: marker, runTime: closestTime, isOpen: false });
+                });
+            }
+        }
+
+        // --- 4. SVG CHART LOGIC ---
+        function drawSvgChart(data) {
+            const svg = document.getElementById('chart-svg');
+            const pathVel = document.getElementById('path-vel');
+            const pathAcc = document.getElementById('path-acc');
+            const dotsLayer = document.getElementById('photo-dots-layer');
+            
+            // Set coordinate system: X = 0 to maxTime, Y = 0 to maxVel
+            // We use viewBox to handle scaling automatically
+            svg.setAttribute('viewBox', `0 0 ${maxRunTime} ${maxVel}`);
+            // Note: SVG Y is down. We need to flip Y in calculations.
+
+            // Build Velocity Path
+            let dVel = "";
+            let dAcc = "";
+            
+            data.track_points.forEach((p, i) => {
+                const x = p.time;
+                const yVel = maxVel - p.vel; // Flip Y
+                const yAcc = maxVel - (p.acc || 0); // Flip Y (Rough scaling for Acc)
+
+                if (i === 0) {
+                    dVel += `M ${x} ${yVel}`;
+                    dAcc += `M ${x} ${yAcc}`;
+                } else {
+                    dVel += ` L ${x} ${yVel}`;
+                    dAcc += ` L ${x} ${yAcc}`;
+                }
+            });
+
+            pathVel.setAttribute('d', dVel);
+            pathAcc.setAttribute('d', dAcc);
+
+            // Add Photo Dots to SVG
+            dotsLayer.innerHTML = ''; // Clear
+            if (data.photos) {
+                data.photos.forEach(photo => {
+                    // Re-find velocity at this photo time to position dot on the line
+                    // Find Time
+                    let closestP = data.track_points[0];
+                    let minDist = Infinity;
+                    data.track_points.forEach(p => {
+                        const d = Math.sqrt(Math.pow(p.lat - photo.lat, 2) + Math.pow(p.lng - photo.lng, 2));
+                        if(d < minDist) { minDist = d; closestP = p; }
+                    });
+
+                    const cx = closestP.time;
+                    const cy = maxVel - closestP.vel;
+
+                    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                    circle.setAttribute("cx", cx);
+                    circle.setAttribute("cy", cy);
+                    circle.setAttribute("r", 0.5); // Radius relative to viewBox (time). Keep small.
+                    circle.setAttribute("class", "chart-photo-dot");
+                    
+                    // Click to View Logic
+                    circle.onclick = () => {
+                        updateFrame(closestP.time);
+                        // Find map marker and open
+                        const pm = photoMarkers.find(m => Math.abs(m.runTime - closestP.time) < 1);
+                        if(pm) pm.marker.openPopup();
+                    };
+
+                    dotsLayer.appendChild(circle);
+                });
+            }
+        }
+
+
+        // --- 5. SMOOTH INTERPOLATION & SYNC ---
+        
+        document.getElementById('timeSlider').addEventListener('input', function(e) {
+            updateFrame(parseFloat(this.value));
+        });
+
+        window.addEventListener('message', function(event) {
+            if (event.data.type !== 'run_viewer_sync' || !runData) return;
+            const { currentTime, totalDuration } = event.data;
+            if (totalDuration <= 0) return;
+            
+            const progress = currentTime / totalDuration;
+            const currentRunTime = progress * maxRunTime;
+            
+            document.getElementById('timeSlider').value = currentRunTime;
+            updateFrame(currentRunTime);
+        });
+
+        // THE SMOOTH MOVER
+        function updateFrame(time) {
+            if (!runData) return;
+            
+            // A. Stats
+            const m = Math.floor(time / 60);
+            const s = Math.floor(time % 60);
+            document.getElementById('syncTime').innerText = `${m}:${s.toString().padStart(2, '0')}`;
+
+            // B. INTERPOLATION (The Fix for Poor Animation)
+            const points = runData.track_points;
+            
+            // Find the two points bounding the current time: p1 <= time < p2
+            // Since data is sorted by time, we can iterate or binary search.
+            let idx = -1;
+            for(let i=0; i < points.length - 1; i++) {
+                if (time >= points[i].time && time < points[i+1].time) {
+                    idx = i;
+                    break;
+                }
+            }
+
+            if (idx !== -1) {
+                const p1 = points[idx];
+                const p2 = points[idx+1];
+                
+                // Calculate Fraction (0.0 to 1.0) between the points
+                const timeSpan = p2.time - p1.time;
+                const fraction = (timeSpan > 0) ? (time - p1.time) / timeSpan : 0;
+                
+                // LERP (Linear Interpolation) Lat/Lng
+                const lat = p1.lat + (p2.lat - p1.lat) * fraction;
+                const lng = p1.lng + (p2.lng - p1.lng) * fraction;
+                const vel = p1.vel + (p2.vel - p1.vel) * fraction;
+
+                runnerMarker.setLatLng([lat, lng]);
+                document.getElementById('syncVel').innerText = vel.toFixed(1);
+
+            } else {
+                // End of track or Start
+                if (time >= points[points.length-1].time) {
+                    const p = points[points.length-1];
+                    runnerMarker.setLatLng([p.lat, p.lng]);
+                }
+            }
+
+            // C. SVG CURSOR
+            const scrubber = document.getElementById('scrubber-line');
+            scrubber.setAttribute('x1', time);
+            scrubber.setAttribute('x2', time);
+
+            // D. TRIGGER PHOTOS
+            const PHOTO_WINDOW = 15; 
+            photoMarkers.forEach(pm => {
+                const dist = Math.abs(pm.runTime - time);
+                const markerIcon = pm.marker.getElement();
+                if (dist < PHOTO_WINDOW) {
+                    if (!pm.isOpen) {
+                        pm.marker.openPopup();
+                        if(markerIcon) markerIcon.classList.add('active-photo');
+                        pm.isOpen = true;
+                    }
+                } else {
+                    if (pm.isOpen) {
+                        pm.marker.closePopup();
+                        if(markerIcon) markerIcon.classList.remove('active-photo');
+                        pm.isOpen = false;
+                    }
+                }
+            });
+        }
+    </script>
+</body>
+</html>

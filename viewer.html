@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Run Viewer</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="style.css">
+    <style>
+        /* Viewer Specific Styles */
+        #viewer-controls { padding: 20px; background: white; border-bottom: 1px solid #ddd; }
+        #scrubber-container { margin-top: 15px; display: none; }
+        input[type=range] { width: 100%; }
+        #info-display { font-weight: bold; margin-top: 10px; color: #007bff; }
+    </style>
+</head>
+<body>
+
+    <div id="viewer-controls">
+        <h3>Load Session Data</h3>
+        <input type="file" id="file-input" accept=".json" onchange="loadSession(this)">
+        <div id="loading-msg" style="display:none; color: orange;">Processing large file... please wait...</div>
+        
+        <div id="scrubber-container">
+            <label>Timeline Scrubber:</label>
+            <input type="range" id="time-slider" min="0" max="100" value="0" step="1">
+            <div id="info-display">Time: 00:00</div>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="viewer.js"></script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f4f4; }
+#map { height: 60vh; width: 100%; z-index: 1; }
+#controls { height: 40vh; padding: 20px; box-sizing: border-box; overflow-y: scroll; background: #fff; border-top: 1px solid #ccc; z-index: 2; position: relative; }
+
+/* Dashboard Stats */
+.stat-box { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 15px; }
+.stat { background: #f8f9fa; padding: 10px; border-radius: 8px; text-align: center; border: 1px solid #eee; }
+.label { font-size: 0.7em; color: #666; text-transform: uppercase; letter-spacing: 0.5px; }
+.value { font-size: 1.2em; font-weight: bold; color: #333; }
+
+/* Buttons */
+button { width: 100%; padding: 15px; font-size: 1em; border: none; border-radius: 8px; margin-bottom: 10px; cursor: pointer; font-weight: bold; color: white; transition: transform 0.1s; }
+button:active { transform: scale(0.98); opacity: 0.9; }
+.button-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+
+/* Colors */
+.btn-green { background: #28a745; }
+.btn-red { background: #dc3545; }
+.btn-blue { background: #007bff; }
+.btn-dark { background: #343a40; }
+.btn-grey { background: #6c757d; font-size: 0.9em; }
+.btn-danger { background: #d9534f; }
+
+/* Mode Switch */
+.mode-switch { margin-bottom: 15px; text-align: center; font-size: 0.9em; color: #555; background: #eee; padding: 8px; border-radius: 6px; }
+.mode-switch input { margin-right: 8px; }
+
+#camera-input { display: none; }
+
+/* Photo Markers on Map */
+.photo-marker { border: 2px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.5); background-size: cover; border-radius: 50%; }
