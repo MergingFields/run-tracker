@@ -12,10 +12,10 @@
         /* Camera Viewfinder Styling */
         #cam-container {
             position: fixed;
-            bottom: 160px; /* Above controls */
+            bottom: 180px; /* Shifted up slightly */
             left: 50%;
             transform: translateX(-50%);
-            width: 90%;
+            width: 95%;
             max-width: 400px;
             height: 250px;
             background: #000;
@@ -30,8 +30,28 @@
             height: 100%;
             object-fit: cover;
         }
-        /* Hidden canvas for capturing the frame */
+        /* Buttons inside the camera view */
+        .cam-overlay-btn {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.5);
+            color: white;
+            border: 1px solid white;
+            padding: 5px 10px;
+            border-radius: 15px;
+            cursor: pointer;
+            z-index: 1001;
+        }
         #capture-canvas { display: none; }
+        
+        /* Grid for the two camera options */
+        .cam-controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
     </style>
 </head>
 <body>
@@ -40,6 +60,7 @@
     
     <div id="cam-container">
         <video id="live-video" autoplay playsinline muted></video>
+        <button class="cam-overlay-btn" onclick="switchCamera()">↻ Switch</button>
     </div>
     <canvas id="capture-canvas"></canvas>
 
@@ -60,7 +81,13 @@
         <button id="btn-start" class="btn-green" onclick="toggleTracking(true); startCamera();">Start Run & Cam</button>
         <button id="btn-stop" class="btn-red" onclick="toggleTracking(false); stopCamera();" style="display:none;">Stop Tracking</button>
 
-        <button id="btn-snap" class="btn-blue" onclick="snapPhoto()">SNAP PHOTO</button>
+        <div class="cam-controls">
+            <button id="btn-snap" class="btn-blue" onclick="snapPhoto()">⚡ SNAP</button>
+            
+            <button class="btn-grey" onclick="document.getElementById('camera-input').click()">📷 Sys Cam</button>
+        </div>
+        
+        <input type="file" id="camera-input" accept="image/*" capture="environment" onchange="handlePhoto(this)" style="display:none;">
         
         <div class="button-grid" id="save-options" style="display:none;">
             <button class="btn-dark" onclick="downloadRun(true)">Save Full</button>
@@ -71,6 +98,7 @@
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
     <script src="tracker.js"></script>
 
     <script>
@@ -78,24 +106,34 @@
         const canvas = document.getElementById('capture-canvas');
         const camContainer = document.getElementById('cam-container');
         let stream = null;
+        let currentFacingMode = "environment"; // Default to rear camera
 
         async function startCamera() {
+            if (stream) stopCamera(); // Ensure clean restart
             try {
                 stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "environment" } // Rear camera
+                    video: { facingMode: currentFacingMode } 
                 });
                 video.srcObject = stream;
-                camContainer.style.display = 'block'; // Show viewfinder
+                camContainer.style.display = 'block'; 
             } catch (err) {
-                alert("Camera Error: " + err);
+                console.warn("Camera Error:", err);
+                alert("Could not start active camera. Use 'Sys Cam' button instead.");
             }
         }
 
         function stopCamera() {
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
+                stream = null;
                 camContainer.style.display = 'none';
             }
+        }
+
+        async function switchCamera() {
+            // Toggle mode
+            currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
+            await startCamera(); // Restart with new mode
         }
 
         async function snapPhoto() {
@@ -104,22 +142,27 @@
                 return;
             }
 
-            // 1. Get Compass Heading (uses shared logic from tracker.js)
+            // 1. Get Compass Heading
             const heading = await getHeadingNow();
 
-            // 2. Draw video frame to canvas
+            // 2. Capture Frame
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
             const ctx = canvas.getContext('2d');
+            
+            // Mirror image if using selfie camera
+            if (currentFacingMode === "user") {
+                ctx.translate(canvas.width, 0);
+                ctx.scale(-1, 1);
+            }
+            
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-            // 3. Convert to Base64
-            const imgData = canvas.toDataURL('image/jpeg', 0.7); // 70% quality JPG
+            // 3. Process Data
+            const imgData = canvas.toDataURL('image/jpeg', 0.7); 
+            addPhotoToTrack(imgData, heading); // Use shared logic
 
-            // 4. Send to shared tracker logic
-            addPhotoToTrack(imgData, heading);
-
-            // Visual feedback (flash effect)
+            // 4. Flash Effect
             camContainer.style.border = "5px solid yellow";
             setTimeout(() => camContainer.style.border = "2px solid #fff", 200);
         }

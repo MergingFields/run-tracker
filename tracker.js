@@ -184,7 +184,7 @@ function addPhotoToTrack(imgData, heading) {
     });
 }
 
-// EXISTING: Handles File Input (Battery Saver Mode)
+// EXISTING: Handles File Input (Normal Camera / Battery Saver Mode)
 async function handlePhoto(input) {
     if (input.files && input.files[0]) {
         const file = input.files[0];
