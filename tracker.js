@@ -211,6 +211,23 @@ async function handlePhoto(input) {
 // 5. EXPORT & UTILS
 // ==========================================
 function downloadRun(includePhotos) {
+    // === DEBUG: THE TRUTH TELLER ===
+    const count = photoData.length;
+    
+    // Check if data exists
+    if (includePhotos) {
+        if (count === 0) {
+            alert("⚠️ CRITICAL ERROR: No photos in memory! \nDid the page reload? \nDid you press Start?");
+        } else {
+            // Show us the size of the first photo to prove it's real
+            const sampleSize = photoData[0].src_chunks ? photoData[0].src_chunks.join("").length : 0;
+            alert(`📦 SAVING FULL DATA\nPhotos: ${count}\nData Size: ${sampleSize} chars`);
+        }
+    } else {
+        alert("Preparing lightweight TRACK file (Photos excluded).");
+    }
+    // ================================
+
     const dataObj = {
         version: "2.0",
         date: new Date().toISOString(),
@@ -222,6 +239,7 @@ function downloadRun(includePhotos) {
 
     const blob = new Blob([JSON.stringify(dataObj)], {type: "application/json"});
     const url = URL.createObjectURL(blob);
+    
     const now = new Date();
     const timeString = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const type = includePhotos ? "FULL" : "TRACK";
