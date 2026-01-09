@@ -151,46 +151,52 @@ function updatePosition(position) {
 }
 
 // ==========================================
-// 4. PHOTO LOGIC (WITH CHUNKING)
+// 4. PHOTO LOGIC (SHARED & MODULAR)
 // ==========================================
 function chunkString(str, length) {
     return str.match(new RegExp('.{1,' + length + '}', 'g'));
 }
 
+// NEW: Core function that accepts raw image data from ANY source (File or Camera)
+function addPhotoToTrack(imgData, heading) {
+    const lat = lastPos ? lastPos.latitude : map.getCenter().lat;
+    const lng = lastPos ? lastPos.longitude : map.getCenter().lng;
+
+    // Map Marker
+    const photoIcon = L.divIcon({
+        html: `<div style="background-image: url('${imgData}'); width: 40px; height: 40px;" class="photo-marker"></div>`,
+        className: 'photo-marker-container',
+        iconSize: [44, 44],
+        iconAnchor: [22, 44]
+    });
+
+    L.marker([lat, lng], {icon: photoIcon})
+        .addTo(map)
+        .bindPopup(`<img src="${imgData}" style="width:100px;"><br>Heading: ${Math.round(heading)}°`);
+    
+    // SAVE DATA
+    photoData.push({
+        lat: lat,
+        lng: lng,
+        heading: Math.round(heading),
+        src_chunks: chunkString(imgData, 100),
+        timestamp: Date.now()
+    });
+}
+
+// EXISTING: Handles File Input (Battery Saver Mode)
 async function handlePhoto(input) {
     if (input.files && input.files[0]) {
         const file = input.files[0];
         
-        // 1. Get Compass (Async)
+        // Get Compass (Async)
         const heading = await getHeadingNow();
 
         const reader = new FileReader();
         reader.onload = function(e) {
-            const imgData = e.target.result;
-            const lat = lastPos ? lastPos.latitude : map.getCenter().lat;
-            const lng = lastPos ? lastPos.longitude : map.getCenter().lng;
-
-            // Map Marker
-            const photoIcon = L.divIcon({
-                html: `<div style="background-image: url('${imgData}'); width: 40px; height: 40px;" class="photo-marker"></div>`,
-                className: 'photo-marker-container',
-                iconSize: [44, 44],
-                iconAnchor: [22, 44]
-            });
-
-            L.marker([lat, lng], {icon: photoIcon})
-                .addTo(map)
-                .bindPopup(`<img src="${imgData}" style="width:100px;"><br>Heading: ${Math.round(heading)}°`);
-            
-            // SAVE DATA (Using Chunks to prevent crashes)
-            photoData.push({
-                lat: lat,
-                lng: lng,
-                heading: Math.round(heading),
-                src_chunks: chunkString(imgData, 100), // Split into 100-char lines
-                timestamp: Date.now()
-            });
-        }
+            // Pass the result to the shared function
+            addPhotoToTrack(e.target.result, heading);
+        };
         reader.readAsDataURL(file);
     }
 }

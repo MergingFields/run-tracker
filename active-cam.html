@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Run Tracker - Active Cam</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="style.css"> 
+    
+    <style>
+        /* Camera Viewfinder Styling */
+        #cam-container {
+            position: fixed;
+            bottom: 160px; /* Above controls */
+            left: 50%;
+            transform: translateX(-50%);
+            width: 90%;
+            max-width: 400px;
+            height: 250px;
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 2px solid #fff;
+            display: none; /* Hidden until started */
+            z-index: 1000;
+        }
+        #live-video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        /* Hidden canvas for capturing the frame */
+        #capture-canvas { display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="map"></div>
+    
+    <div id="cam-container">
+        <video id="live-video" autoplay playsinline muted></video>
+    </div>
+    <canvas id="capture-canvas"></canvas>
+
+    <div id="controls">
+        <div class="stat-box">
+            <div class="stat"><div class="label">Time</div><div class="value" id="time">00:00</div></div>
+            <div class="stat"><div class="label">Dist (m)</div><div class="value" id="dist">0</div></div>
+            <div class="stat"><div class="label">Vel (m/s)</div><div class="value" id="vel">0.0</div></div>
+        </div>
+
+        <div class="mode-switch">
+            <label>
+                <input type="checkbox" id="compass-toggle" onchange="toggleCompassMode()">
+                <span class="mode-label">Mode: Walking (Eco)</span>
+            </label>
+        </div>
+
+        <button id="btn-start" class="btn-green" onclick="toggleTracking(true); startCamera();">Start Run & Cam</button>
+        <button id="btn-stop" class="btn-red" onclick="toggleTracking(false); stopCamera();" style="display:none;">Stop Tracking</button>
+
+        <button id="btn-snap" class="btn-blue" onclick="snapPhoto()">SNAP PHOTO</button>
+        
+        <div class="button-grid" id="save-options" style="display:none;">
+            <button class="btn-dark" onclick="downloadRun(true)">Save Full</button>
+            <button class="btn-grey" onclick="downloadRun(false)">Save Track</button>
+        </div>
+
+        <button id="btn-reset" class="btn-danger" onclick="saveAndReset()" style="display:none;">End & Reset</button>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="tracker.js"></script>
+
+    <script>
+        const video = document.getElementById('live-video');
+        const canvas = document.getElementById('capture-canvas');
+        const camContainer = document.getElementById('cam-container');
+        let stream = null;
+
+        async function startCamera() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment" } // Rear camera
+                });
+                video.srcObject = stream;
+                camContainer.style.display = 'block'; // Show viewfinder
+            } catch (err) {
+                alert("Camera Error: " + err);
+            }
+        }
+
+        function stopCamera() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                camContainer.style.display = 'none';
+            }
+        }
+
+        async function snapPhoto() {
+            if (!stream) {
+                alert("Camera not active! Start Run first.");
+                return;
+            }
+
+            // 1. Get Compass Heading (uses shared logic from tracker.js)
+            const heading = await getHeadingNow();
+
+            // 2. Draw video frame to canvas
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            // 3. Convert to Base64
+            const imgData = canvas.toDataURL('image/jpeg', 0.7); // 70% quality JPG
+
+            // 4. Send to shared tracker logic
+            addPhotoToTrack(imgData, heading);
+
+            // Visual feedback (flash effect)
+            camContainer.style.border = "5px solid yellow";
+            setTimeout(() => camContainer.style.border = "2px solid #fff", 200);
+        }
+    </script>
+</body>
+</html>
