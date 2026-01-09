@@ -157,10 +157,17 @@ function chunkString(str, length) {
     return str.match(new RegExp('.{1,' + length + '}', 'g'));
 }
 
-// NEW: Core function that accepts raw image data from ANY source (File or Camera)
+// UPDATED: Now blocks photos if GPS is missing
 function addPhotoToTrack(imgData, heading) {
-    const lat = lastPos ? lastPos.latitude : map.getCenter().lat;
-    const lng = lastPos ? lastPos.longitude : map.getCenter().lng;
+    // 1. SAFETY CHECK: Do we have a GPS Fix?
+    if (!lastPos) {
+        alert("⚠️ GPS searching... \nWait for the map to zoom to your location first!");
+        return; // Stop! Don't save a photo in the ocean.
+    }
+
+    // 2. Use the confirmed GPS location
+    const lat = lastPos.latitude;
+    const lng = lastPos.longitude;
 
     // Map Marker
     const photoIcon = L.divIcon({
