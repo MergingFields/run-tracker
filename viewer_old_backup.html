@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Run Viewer 7.0 (Compass & Sync Fix)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <link rel="icon" href="data:,">
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; background: #111; color: #eee; overflow: hidden; }
+        
+        #controls { padding: 8px; background: #222; border-bottom: 1px solid #444; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; z-index: 1000; }
+        
+        /* Indicators */
+        .led { width: 10px; height: 10px; border-radius: 50%; background: #333; display: inline-block; border: 1px solid #000; }
+        .led.rx.on { background: #0f0; box-shadow: 0 0 8px #0f0; } 
+        .led.tx.on { background: #f00; box-shadow: 0 0 8px #f00; } 
+        
+        /* Toggles */
+        .toggle-label { font-size: 0.85em; color: #ccc; cursor: pointer; display: flex; align-items: center; gap: 4px; user-select: none; border: 1px solid #444; padding: 2px 6px; border-radius: 4px; background: #333; }
+        .toggle-label:hover { background: #444; }
+        .toggle-label input { margin: 0; }
+        
+        #lblCompass { border-color: #ffd700; color: #ffd700; }
+        #lblCompass.active { background: #ffd700; color: #000; }
+
+        /* Manual Time Input */
+        #inpDuration { 
+            background: #111; border: 1px solid #555; color: #fff; 
+            width: 40px; padding: 2px; border-radius: 3px; text-align: center; font-size: 0.9em;
+        }
+
+        /* Stats Area */
+        .stats { 
+            font-family: monospace; font-size: 1.1em; 
+            margin-left: auto; text-align: right; line-height: 1.1; 
+            background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 4px;
+        }
+        .val-blue { color: #4facfe; font-weight: bold; }
+        .val-red { color: #ff0055; font-weight: bold; }
+        .unit { font-size: 0.6em; color: #888; }
+        
+        #map-container { flex-grow: 1; position: relative; width: 100%; overflow: hidden; }
+        #map { width: 100%; height: 100%; background: #222; transition: transform 0.1s linear; }
+        
+        /* Heading Arrow on Map */
+        .runner-icon {
+            width: 20px; height: 20px;
+            background: #ff0055; border: 2px solid white;
+            border-radius: 50%;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+        }
+        .heading-arrow {
+            width: 0; height: 0;
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-bottom: 12px solid #ffd700;
+            position: absolute; top: -14px; left: 2px;
+        }
+
+        /* Chart Area */
+        #charts-container { height: 35vh; background: #1a1a1a; position: relative; border-top: 1px solid #444; transition: height 0.3s; }
+        #charts-container.hidden { height: 0; border: none; }
+        
+        #chart-svg { width: 100%; height: 100%; display: block; }
+        .line-vel { fill: none; stroke: #4facfe; stroke-width: 2; vector-effect: non-scaling-stroke; }
+        .line-acc { fill: none; stroke: #ff0055; stroke-width: 1.5; opacity: 0.7; vector-effect: non-scaling-stroke; }
+        .cursor-line { stroke: white; stroke-width: 1; pointer-events: none; }
+        .photo-dot { fill: #ffd700; stroke: #000; stroke-width: 1; cursor: pointer; }
+        
+        #scrubber-container { padding: 10px; background: #111; z-index: 1001; }
+        input[type=range] { width: 100%; cursor: pointer; accent-color: #4facfe; height: 20px; }
+        
+        /* Popup Styling */
+        .leaflet-popup-content-wrapper { background: rgba(0,0,0,0.9); color: white; border: 1px solid #444; border-radius: 4px; }
+        .leaflet-popup-tip { background: rgba(0,0,0,0.9); }
+        .leaflet-popup-content img { cursor: pointer; border-radius: 2px; max-width: 200px; display: block; }
+        .leaflet-popup-close-button { color: #fff !important; }
+
+        /* Rotate the whole map for compass mode */
+        .compass-mode #map { transform-origin: center center; }
+    </style>
+</head>
+<body>
+
+    <div id="controls">
+        <div style="display:flex; gap:4px; align-items:center;">
+            <div id="led-rx" class="led rx" title="RX"></div>
+            <div id="led-tx" class="led tx" title="TX"></div>
+        </div>
+        
+        <label class="toggle-label"><input type="checkbox" id="chkSync" checked> Sync</label>
+        
+        <label class="toggle-label" id="lblCompass" title="Rotate map with phone compass">
+            <input type="checkbox" id="chkCompass"> 🧭
+        </label>
+
+        <label class="toggle-label" title="Scale run to fit specific duration">
+            <input type="checkbox" id="chkScale" checked> Fit:
+        </label>
+        <input type="number" id="inpDuration" value="180" min="1">
+        
+        <label class="toggle-label"><input type="checkbox" id="chkChart" checked> Chart</label>
+        <label class="toggle-label"><input type="checkbox" id="chkAutoPhoto" checked> Auto 📷</label>
+
+        <input type="file" id="fileInput" accept=".json" style="width: 160px; font-size: 0.8em;">
+        
+        <div class="stats">
+            <span id="syncTime">00:00</span> <br>
+            <span id="valVel" class="val-blue">0.0</span><span class="unit">km/h</span>
+        </div>
+    </div>
+
+    <div id="map-container">
+        <div id="map"></div>
+    </div>
+    
+    <div id="charts-container">
+        <svg id="chart-svg" preserveAspectRatio="none"></svg>
+        <div id="chart-overlay" style="position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair;"></div>
+    </div>
+    
+    <div id="scrubber-container"><input type="range" id="timeSlider" min="0" max="100" value="0" step="0.1"></div>
+
+    <script>
+        // --- CONFIG ---
+        const map = L.map('map', { zoomControl: false, attributionControl: false }).setView([0, 0], 2);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+        
+        const pathLayer = L.polyline([], {color: '#4facfe', weight: 4}).addTo(map);
+        
+        // Custom Runner Marker with Heading Arrow
+        const runnerIcon = L.divIcon({
+            className: 'custom-runner',
+            html: '<div class="runner-icon"><div class="heading-arrow"></div></div>',
+            iconSize: [24, 24],
+            iconAnchor: [12, 12]
+        });
+        const runnerMarker = L.marker([0,0], {icon: runnerIcon, zIndexOffset: 1000}).addTo(map);
+
+        const syncChannel = new BroadcastChannel('song_sync_channel');
+        
+        // State
+        let runData = null;
+        let photoMarkers = [];
+        let maxRunTime = 100;
+        let isDragging = false;
+        let lastReceive = 0;
+        let ignoreSyncUntil = 0; // Cooldown for sync echo
+        let userHasOpenedPopup = false; // Prevents auto-photo from closing user clicks
+
+        // Compass State
+        let currentHeading = 0;
+        let compassActive = false;
+
+        // --- 1. COMPASS LOGIC ---
+        const chkCompass = document.getElementById('chkCompass');
+        const mapContainer = document.getElementById('map-container');
+        
+        chkCompass.addEventListener('change', (e) => {
+            compassActive = e.target.checked;
+            document.getElementById('lblCompass').classList.toggle('active', compassActive);
+            if (compassActive) {
+                mapContainer.classList.add('compass-mode');
+                requestPermission();
+            } else {
+                mapContainer.classList.remove('compass-mode');
+                document.getElementById('map').style.transform = `rotate(0deg)`;
+            }
+        });
+
+        function requestPermission() {
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                DeviceOrientationEvent.requestPermission()
+                    .then(response => {
+                        if (response === 'granted') {
+                            window.addEventListener('deviceorientation', handleOrientation);
+                        } else {
+                            alert("Compass permission denied");
+                            chkCompass.checked = false;
+                        }
+                    })
+                    .catch(console.error);
+            } else {
+                window.addEventListener('deviceorientation', handleOrientation);
+            }
+        }
+
+        function handleOrientation(e) {
+            if (!compassActive) return;
+            // Get compass heading (alpha is usually 0-360)
+            // iOS uses webkitCompassHeading
+            let heading = e.webkitCompassHeading || Math.abs(e.alpha - 360);
+            
+            // Rotate the MAP counter-clockwise to simulate "turning"
+            // We rotate the div, not the Leaflet view, for smooth 60fps
+            document.getElementById('map').style.transform = `rotate(-${heading}deg)`;
+            
+            // Counter-rotate markers so they stay upright (Optional, advanced)
+            // For now, let's just rotate the whole world view
+        }
+
+
+        // --- 2. DURATION & SCALING ---
+        function getTargetDuration() {
+            let val = parseFloat(document.getElementById('inpDuration').value);
+            return (val > 0) ? val : 180;
+        }
+
+        function getScaleFactor() {
+            if (!document.getElementById('chkScale').checked || maxRunTime <= 0) return 1.0;
+            return getTargetDuration() / maxRunTime;
+        }
+
+        // --- 3. COMMS (SYNC FIX) ---
+        function handleIncoming(data) {
+            if (!data.isHub || data.type !== 'time_update') return;
+            
+            // Check Cooldown (Prevents Echo Jumps)
+            if (Date.now() < ignoreSyncUntil) return;
+
+            lastReceive = Date.now();
+            
+            // Auto-update Duration from Hub
+            if (data.duration && data.duration > 0) {
+                const inp = document.getElementById('inpDuration');
+                if (Math.abs(parseFloat(inp.value) - data.duration) > 1) {
+                    inp.value = Math.round(data.duration);
+                }
+            }
+            
+            const songTime = parseFloat(data.time);
+            const factor = getScaleFactor();
+            const localTime = songTime / factor;
+
+            if (!isDragging && !isNaN(localTime)) {
+                const led = document.getElementById('led-rx');
+                led.classList.add('on'); setTimeout(() => led.classList.remove('on'), 100);
+                
+                document.getElementById('timeSlider').value = localTime;
+                updateVisuals(localTime); // Pure visual update, no sending back
+            }
+        }
+        syncChannel.onmessage = (e) => { if(e.data) handleIncoming(e.data); };
+        window.addEventListener('message', (e) => { if(e.data) handleIncoming(e.data); });
+
+
+        // --- 4. SENDING (JUMP LOGIC) ---
+        function safeJump(localT) {
+            if (isNaN(localT)) return;
+
+            // Update local immediately
+            document.getElementById('timeSlider').value = localT;
+            updateVisuals(localT);
+            
+            // Prevent receiving our own echo for 500ms
+            ignoreSyncUntil = Date.now() + 500;
+
+            if (!document.getElementById('chkSync').checked) return;
+
+            const factor = getScaleFactor();
+            let songTime = localT * factor;
+            
+            // Clamp
+            const target = getTargetDuration();
+            if (songTime >= target) songTime = target - 0.1;
+
+            const led = document.getElementById('led-tx');
+            led.classList.add('on'); setTimeout(() => led.classList.remove('on'), 100);
+
+            const msg = { type: 'sync_time', time: songTime };
+            if (window.opener && !window.opener.closed) window.opener.postMessage(msg, '*');
+            syncChannel.postMessage(msg);
+        }
+
+        // --- 5. VISUALIZER & POPUP LOGIC ---
+        function updateVisuals(t) {
+            if (!runData) return;
+            
+            // 1. Digital Clock
+            const m = Math.floor(t/60); const s = Math.floor(t%60);
+            document.getElementById('syncTime').innerText = `${m}:${s.toString().padStart(2,'0')}`;
+            
+            // 2. Chart Scrubber
+            const line = document.getElementById('scrubber-line');
+            if(line) { 
+                const x = 60 + (t / maxRunTime) * (1000 - 120); // Sync with margin math
+                line.setAttribute('x1', x); line.setAttribute('x2', x); 
+            }
+
+            // 3. Runner Position
+            const points = runData.track_points;
+            let idx = -1;
+            for(let i=0; i < points.length-1; i++) {
+                if (t >= points[i].time && t < points[i+1].time) { idx = i; break; }
+            }
+            if (idx !== -1) {
+                const p1 = points[idx]; const p2 = points[idx+1];
+                const f = (t - p1.time) / (p2.time - p1.time);
+                
+                const lat = (p1.lat||p1.latitude) + ((p2.lat||p2.latitude) - (p1.lat||p1.latitude)) * f;
+                const lng = (p1.lng||p1.longitude) + ((p2.lng||p2.longitude) - (p1.lng||p1.longitude)) * f;
+                
+                runnerMarker.setLatLng([lat, lng]);
+                
+                // Keep map centered if not manually dragging map (Optional)
+                // map.panTo([lat, lng]); 
+
+                // Stats
+                const vel = (p1.vel + (p2.vel - p1.vel) * f) * 3.6; // km/h
+                document.getElementById('valVel').innerText = vel.toFixed(1);
+            }
+
+            // 4. Auto Photo Logic (SMART FIX)
+            if (document.getElementById('chkAutoPhoto').checked && !userHasOpenedPopup) {
+                let activeMarker = null;
+                for (let marker of photoMarkers) {
+                    if (Math.abs(marker.photoTimestamp - t) < 3.0) { activeMarker = marker; break; }
+                }
+                
+                if (activeMarker) { 
+                    if (!activeMarker.isPopupOpen()) activeMarker.openPopup(); 
+                } else {
+                    // Only close if we are sure it was an auto-popup
+                    map.closePopup(); 
+                }
+            }
+        }
+
+        // --- 6. DATA LOADING & CHART ---
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                try {
+                    const json = JSON.parse(event.target.result);
+                    const points = json.track_points || json.points;
+                    if (!Array.isArray(points)) throw new Error("No points");
+                    runData = { track_points: points, photos: json.photos || [] };
+                    initVisualizer();
+                } catch(err) { alert("Error: " + err.message); }
+            };
+            reader.readAsText(file);
+        });
+
+        function initVisualizer() {
+            if (!runData) return;
+            const points = runData.track_points;
+            photoMarkers = []; 
+            
+            // Map Fit
+            const latlngs = points.map(p => [p.lat||p.latitude, p.lng||p.longitude]);
+            if(latlngs.length > 0) {
+                pathLayer.setLatLngs(latlngs);
+                map.fitBounds(pathLayer.getBounds(), {padding: [50,50]});
+            }
+
+            maxRunTime = points[points.length-1].time || 100;
+            document.getElementById('timeSlider').max = maxRunTime;
+            
+            // Draw Chart
+            const svg = document.getElementById('chart-svg');
+            const W = 1000, H = 300, M = {t:20, b:30, l:60, r:60};
+            const innerW = W - M.l - M.r;
+            const innerH = H - M.t - M.b;
+            svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+            svg.innerHTML = ''; 
+
+            // Scales
+            const scaleX = t => M.l + (t/maxRunTime)*innerW;
+            const scaleY = v => M.t + innerH - (v/30)*innerH; // Max 30km/h scale
+
+            let dVel = "", dAcc = "";
+            points.forEach((p, i) => {
+                const x = scaleX(p.time);
+                const v = Math.min((p.vel||0)*3.6, 30); // Clip at 30
+                const a = Math.min(Math.max((p.acc||0)*3.6, -10), 10); // Clip Acc
+                const yV = scaleY(v);
+                const yA = M.t + innerH/2 - (a/20)*innerH; // Center Acc at middle
+
+                const cmd = i===0?'M':'L';
+                dVel += `${cmd} ${x.toFixed(1)} ${yV.toFixed(1)}`;
+                dAcc += `${cmd} ${x.toFixed(1)} ${yA.toFixed(1)}`;
+            });
+
+            // SVG Content
+            const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            g.innerHTML = `
+                <line x1="${M.l}" y1="${M.t+innerH}" x2="${W-M.r}" y2="${M.t+innerH}" stroke="#555" />
+                <path d="${dVel}" class="line-vel" />
+                <path d="${dAcc}" class="line-acc" />
+                <line id="scrubber-line" class="cursor-line" y1="${M.t}" y2="${H-M.b}" />
+            `;
+            svg.appendChild(g);
+
+            // Click chart to jump
+            document.getElementById('chart-overlay').onclick = (e) => {
+                const rect = e.target.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const t = ((x/rect.width * W - M.l)/innerW) * maxRunTime;
+                safeJump(t);
+            };
+
+            // Setup Photo Markers
+            runData.photos.forEach(photo => {
+                let t = 0, minDist = Infinity;
+                const pLat = photo.lat || photo.latitude;
+                const pLng = photo.lng || photo.longitude;
+                // Find closest track point timestamp
+                points.forEach(p => {
+                    const d = Math.abs((p.lat||p.latitude) - pLat) + Math.abs((p.lng||p.longitude) - pLng);
+                    if(d < minDist) { minDist = d; t = p.time; }
+                });
+
+                const imgSrc = photo.src_chunks ? photo.src_chunks.join('') : photo.src;
+                const icon = L.divIcon({ 
+                    html: `<div style="background-image:url('${imgSrc}'); width:24px; height:24px; background-size:cover; border-radius:50%; border:2px solid white;"></div>`, 
+                    iconSize:[28,28] 
+                });
+                
+                const m = L.marker([pLat, pLng], {icon:icon}).addTo(map);
+                m.photoTimestamp = t;
+                
+                // POPUP CONTENT
+                const container = document.createElement('div');
+                const img = document.createElement('img');
+                img.src = imgSrc;
+                img.onclick = (e) => { 
+                    e.stopPropagation(); 
+                    safeJump(t); // Clicking IMAGE jumps time
+                };
+                
+                const btnJump = document.createElement('button');
+                btnJump.innerText = "Jump to Here";
+                btnJump.style.width = "100%"; btnJump.style.marginTop = "5px";
+                btnJump.onclick = () => safeJump(t);
+
+                container.appendChild(img);
+                container.appendChild(btnJump);
+                m.bindPopup(container);
+
+                // IMPORTANT: Interaction Logic
+                m.on('click', () => {
+                    userHasOpenedPopup = true; // User took control
+                    // We DO NOT auto-jump here to prevent sync loops. 
+                    // User must click "Jump to Here" or the image to sync.
+                });
+                
+                m.on('popupclose', () => {
+                    setTimeout(() => userHasOpenedPopup = false, 1000); // Release control after delay
+                });
+
+                photoMarkers.push(m);
+            });
+        }
+
+        // --- 7. UI EVENT LISTENERS ---
+        const slider = document.getElementById('timeSlider');
+        slider.addEventListener('mousedown', () => isDragging = true);
+        slider.addEventListener('mouseup', () => { isDragging = false; safeJump(parseFloat(slider.value)); });
+        slider.addEventListener('input', () => updateVisuals(parseFloat(slider.value)));
+
+        document.getElementById('chkChart').addEventListener('change', e => {
+            document.getElementById('charts-container').classList.toggle('hidden', !e.target.checked);
+        });
+
+        // Hello Packet (Reconnects if Viewer was refreshed)
+        setInterval(() => {
+            if (window.opener && !window.opener.closed) {
+                window.opener.postMessage({ type: 'viewer_hello' }, '*');
+            }
+        }, 3000);
+
+    </script>
+</body>
+</html>
