@@ -9,10 +9,10 @@
     <link rel="stylesheet" href="style.css"> 
     
     <style>
-        /* Camera Viewfinder Styling */
+        /* Camera Viewfinder Styling - NOW CLEAN (No buttons inside) */
         #cam-container {
             position: fixed;
-            bottom: 180px;
+            bottom: 240px; /* Moved up to make room for extra buttons */
             left: 50%;
             transform: translateX(-50%);
             width: 95%;
@@ -31,40 +31,27 @@
             object-fit: cover;
         }
         
-        /* Camera Overlay Buttons */
-        .cam-btn {
-            position: absolute;
-            bottom: 10px;
-            background: rgba(0,0,0,0.6);
-            color: white;
-            border: 1px solid white;
-            padding: 5px 12px;
-            border-radius: 15px;
-            cursor: pointer;
-            z-index: 1001;
-            font-size: 14px;
-            font-weight: bold;
-        }
-        /* Switch Camera (Right Side) */
-        #btn-switch-cam { right: 10px; }
-        
-        /* Quality Toggle (Left Side) */
-        #btn-quality { left: 10px; }
-        
-        /* Active State for Quality Button */
-        .hq-active {
-            background: rgba(0, 200, 0, 0.7) !important;
-            border-color: #0f0 !important;
-        }
-
         #capture-canvas { display: none; }
         
-        /* Grid for the two camera options */
-        .cam-controls {
+        /* Button Grids */
+        .cam-settings {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 10px;
             margin-bottom: 10px;
+        }
+        .cam-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        /* HD Mode Active Style */
+        .btn-hd-active {
+            background-color: #007bff !important; /* Bright Blue */
+            color: white !important;
+            border: 1px solid #0056b3 !important;
         }
     </style>
 </head>
@@ -74,10 +61,6 @@
     
     <div id="cam-container">
         <video id="live-video" autoplay playsinline muted></video>
-        
-        <button id="btn-quality" class="cam-btn" onclick="toggleQuality()">SD</button>
-        
-        <button id="btn-switch-cam" class="cam-btn" onclick="switchCamera()">↻</button>
     </div>
     <canvas id="capture-canvas"></canvas>
 
@@ -98,9 +81,13 @@
         <button id="btn-start" class="btn-green" onclick="toggleTracking(true); startCamera();">Start Run & Cam</button>
         <button id="btn-stop" class="btn-red" onclick="toggleTracking(false); stopCamera();" style="display:none;">Stop Tracking</button>
 
-        <div class="cam-controls">
+        <div class="cam-settings">
+            <button id="btn-quality" class="btn-grey" onclick="toggleQuality()">Quality: SD</button>
+            <button id="btn-switch" class="btn-grey" onclick="switchCamera()">Switch Cam ↻</button>
+        </div>
+
+        <div class="cam-actions">
             <button id="btn-snap" class="btn-blue" onclick="snapPhoto()">⚡ SNAP</button>
-            
             <button class="btn-grey" onclick="document.getElementById('camera-input').click()">📷 Sys Cam</button>
         </div>
         
@@ -115,8 +102,7 @@
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    
-    <script src="tracker.js?v=3"></script>
+    <script src="tracker.js?v=4"></script>
 
     <script>
         const video = document.getElementById('live-video');
@@ -125,18 +111,15 @@
         const qualityBtn = document.getElementById('btn-quality');
         
         let stream = null;
-        let currentFacingMode = "environment"; // Rear camera
-        let isHighQuality = false; // Default to SD (Small files)
+        let currentFacingMode = "environment"; 
+        let isHighQuality = false; 
 
         async function startCamera() {
-            if (stream) stopCamera(); // Ensure clean restart
+            if (stream) stopCamera(); 
 
-            // DEFINE CONSTRAINTS BASED ON QUALITY MODE
             const constraints = {
                 video: {
                     facingMode: currentFacingMode,
-                    // If High Quality: Ask for 1080p (1920x1080)
-                    // If SD: Ask for VGA (640x480) or let browser decide default
                     width: isHighQuality ? { ideal: 1920 } : { ideal: 640 },
                     height: isHighQuality ? { ideal: 1080 } : { ideal: 480 }
                 }
@@ -148,7 +131,7 @@
                 camContainer.style.display = 'block'; 
             } catch (err) {
                 console.warn("Camera Error:", err);
-                alert("Could not start active camera. Use 'Sys Cam' button instead.");
+                alert("Camera Error. Try 'Sys Cam' instead.");
             }
         }
 
@@ -161,26 +144,30 @@
         }
 
         async function switchCamera() {
+            // Toggle Logic
             currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
+            
+            // Visual feedback on button
+            const btn = document.getElementById('btn-switch');
+            btn.innerText = (currentFacingMode === "environment") ? "Switch Cam ↻" : "Selfie Mode ☺";
+            
             await startCamera(); 
         }
 
         async function toggleQuality() {
-            isHighQuality = !isHighQuality; // Flip state
+            isHighQuality = !isHighQuality; 
             
-            // Update Button UI
             if (isHighQuality) {
-                qualityBtn.innerText = "HD";
-                qualityBtn.classList.add("hq-active");
+                qualityBtn.innerText = "Quality: HD";
+                qualityBtn.classList.remove("btn-grey");
+                qualityBtn.classList.add("btn-hd-active");
             } else {
-                qualityBtn.innerText = "SD";
-                qualityBtn.classList.remove("hq-active");
+                qualityBtn.innerText = "Quality: SD";
+                qualityBtn.classList.remove("btn-hd-active");
+                qualityBtn.classList.add("btn-grey");
             }
 
-            // Restart camera to apply new resolution
-            if (stream) {
-                await startCamera();
-            }
+            if (stream) await startCamera();
         }
 
         async function snapPhoto() {
@@ -188,16 +175,13 @@
                 alert("Camera not active! Start Run first.");
                 return;
             }
-
-            // 1. Get Compass Heading (uses shared logic)
+            
             const heading = await getHeadingNow();
 
-            // 2. Capture Frame
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
             const ctx = canvas.getContext('2d');
             
-            // Mirror image if using selfie camera
             if (currentFacingMode === "user") {
                 ctx.translate(canvas.width, 0);
                 ctx.scale(-1, 1);
@@ -205,15 +189,11 @@
             
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-            // 3. Process Data (COMPRESSION SETTING)
-            // If HD: Use 0.9 (90%) quality
-            // If SD: Use 0.6 (60%) quality
             const quality = isHighQuality ? 0.9 : 0.6;
             const imgData = canvas.toDataURL('image/jpeg', quality); 
             
             addPhotoToTrack(imgData, heading); 
 
-            // 4. Flash Effect
             camContainer.style.border = "5px solid yellow";
             setTimeout(() => camContainer.style.border = "2px solid #fff", 200);
         }
