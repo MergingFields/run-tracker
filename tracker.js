@@ -9,10 +9,10 @@ let tracking = false;
 let startTime = null;
 let lastPos = null;
 let totalDistance = 0;
-let timerInterval = null; // NEW: Timer runs independently of GPS
+let timerInterval = null; 
 
 // ==========================================
-// 1. SETUP MAP
+// 1. SETUP MAP & RESTORE LOGIC
 // ==========================================
 const map = L.map('map').setView([0, 0], 2);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -20,6 +20,67 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 }).addTo(map);
 
 const pathLayer = L.polyline([], {color: '#dc3545', weight: 5}).addTo(map);
+
+// --- NEW: AUTO-RESTORE ON LOAD ---
+window.onload = function() {
+    restoreRunFromMemory();
+};
+
+function restoreRunFromMemory() {
+    const savedTrack = localStorage.getItem('run_track');
+    const savedDist = localStorage.getItem('run_dist');
+    const savedStart = localStorage.getItem('run_start');
+
+    if (savedTrack && savedStart) {
+        const resume = confirm("⚠️ CRASH DETECTED ⚠️\nFound an unfinished run in memory.\n\nRestore GPS path?");
+        if (resume) {
+            // 1. Restore Variables
+            trackData = JSON.parse(savedTrack);
+            totalDistance = parseFloat(savedDist);
+            startTime = parseInt(savedStart);
+            
+            // 2. Restore Map Path
+            const latLngs = trackData.map(p => [p.lat, p.lng]);
+            pathLayer.setLatLngs(latLngs);
+            if (latLngs.length > 0) {
+                map.setView(latLngs[latLngs.length - 1], 16);
+                lastPos = { 
+                    latitude: latLngs[latLngs.length - 1][0], 
+                    longitude: latLngs[latLngs.length - 1][1] 
+                };
+            }
+
+            // 3. Restore UI
+            document.getElementById('dist').innerText = Math.round(totalDistance);
+            toggleTracking(false); // Ready to resume, but paused
+            document.getElementById('btn-start').innerText = "Resume Run";
+            updateUI(false); 
+            
+            // 4. Update timer immediately
+            updateTimeDisplay();
+        } else {
+            // User chose to discard
+            clearMemory();
+        }
+    }
+}
+
+function saveToMemory() {
+    if (!startTime) return;
+    try {
+        localStorage.setItem('run_track', JSON.stringify(trackData));
+        localStorage.setItem('run_dist', totalDistance);
+        localStorage.setItem('run_start', startTime);
+    } catch (e) {
+        console.warn("Storage full! Track path getting too long.");
+    }
+}
+
+function clearMemory() {
+    localStorage.removeItem('run_track');
+    localStorage.removeItem('run_dist');
+    localStorage.removeItem('run_start');
+}
 
 // ==========================================
 // 2. COMPASS LOGIC
@@ -78,16 +139,18 @@ function getHeadingNow() {
 }
 
 // ==========================================
-// 3. TRACKING LOGIC (IMPROVED)
+// 3. TRACKING LOGIC
 // ==========================================
 function toggleTracking(start) {
     tracking = start;
     updateUI(start);
 
     if (start) {
-        if (!startTime) resetRun();
+        if (!startTime) {
+            startTime = Date.now(); // Set start time if new run
+            saveToMemory(); // Initialize save
+        }
         
-        // NEW: Start the visual timer immediately!
         clearInterval(timerInterval);
         timerInterval = setInterval(updateTimeDisplay, 1000);
 
@@ -96,6 +159,7 @@ function toggleTracking(start) {
             watchID = navigator.geolocation.watchPosition(
                 updatePosition,
                 (err) => {
+                    // SILENT ERROR HANDLING (No Alert to freeze Pocket Mode)
                     console.warn("GPS Error:", err);
                     document.getElementById('dist').innerText = "GPS Lost";
                 },
@@ -108,11 +172,11 @@ function toggleTracking(start) {
         if (COMPASS_MODE === "CONTINUOUS") startCompassListener();
 
     } else {
-        // Stop Everything
         if (watchID) navigator.geolocation.clearWatch(watchID);
         watchID = null;
-        clearInterval(timerInterval); // Stop timer
+        clearInterval(timerInterval); 
         stopCompassListener();
+        saveToMemory(); // Force save on pause
     }
 }
 
@@ -127,9 +191,7 @@ function updateTimeDisplay() {
 function updatePosition(position) {
     const lat = position.coords.latitude;
     const lng = position.coords.longitude;
-    // const accuracy = position.coords.accuracy; // (Optional: useful for debugging)
     
-    // Only center map if this is the first point or we moved significantly
     if (!lastPos) {
         map.setView([lat, lng], 18);
     }
@@ -156,19 +218,21 @@ function updatePosition(position) {
     });
 
     lastPos = { latitude: lat, longitude: lng, speed: v_current };
+    
+    // --- NEW: AUTO-SAVE ON EVERY STEP ---
+    saveToMemory();
 }
 
 // ==========================================
-// 4. PHOTO LOGIC (SHARED)
+// 4. PHOTO LOGIC
 // ==========================================
 function chunkString(str, length) {
     return str.match(new RegExp('.{1,' + length + '}', 'g'));
 }
 
 function addPhotoToTrack(imgData, heading) {
-    // 1. SAFETY CHECK
     if (!lastPos) {
-        alert("⚠️ GPS Searching... \nWait for the map to zoom to your location.");
+        alert("⚠️ GPS Searching... \nWait for map to zoom.");
         return; 
     }
 
@@ -193,6 +257,9 @@ function addPhotoToTrack(imgData, heading) {
         src_chunks: chunkString(imgData, 100),
         timestamp: Date.now()
     });
+    
+    // NOTE: We do NOT save photoData to localStorage (too big).
+    // Photos are currently RAM only.
 }
 
 async function handlePhoto(input) {
@@ -211,22 +278,11 @@ async function handlePhoto(input) {
 // 5. EXPORT & UTILS
 // ==========================================
 function downloadRun(includePhotos) {
-    // === DEBUG: THE TRUTH TELLER ===
     const count = photoData.length;
-    
-    // Check if data exists
-    if (includePhotos) {
-        if (count === 0) {
-            alert("⚠️ CRITICAL ERROR: No photos in memory! \nDid the page reload? \nDid you press Start?");
-        } else {
-            // Show us the size of the first photo to prove it's real
-            const sampleSize = photoData[0].src_chunks ? photoData[0].src_chunks.join("").length : 0;
-            alert(`📦 SAVING FULL DATA\nPhotos: ${count}\nData Size: ${sampleSize} chars`);
-        }
-    } else {
-        alert("Preparing lightweight TRACK file (Photos excluded).");
+    // Basic confirm to ensure user knows what they are saving
+    if (includePhotos && count === 0) {
+        alert("Notice: No photos in memory to save.");
     }
-    // ================================
 
     const dataObj = {
         version: "2.0",
@@ -239,7 +295,6 @@ function downloadRun(includePhotos) {
 
     const blob = new Blob([JSON.stringify(dataObj)], {type: "application/json"});
     const url = URL.createObjectURL(blob);
-    
     const now = new Date();
     const timeString = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const type = includePhotos ? "FULL" : "TRACK";
@@ -255,7 +310,10 @@ function downloadRun(includePhotos) {
 function saveAndReset() {
     downloadRun(true); 
     setTimeout(() => {
-        if(confirm("Download started? Reset run?")) window.location.reload(); 
+        if(confirm("Run saved? Clear memory and start new?")) {
+            clearMemory(); // Wipes the safety backup
+            window.location.reload(); 
+        }
     }, 1000); 
 }
 
@@ -266,6 +324,7 @@ function resetRun() {
     pathLayer.setLatLngs([]);
     totalDistance = 0;
     lastPos = null;
+    clearMemory(); // Clear old crash data on new run
     document.getElementById('dist').innerText = "0";
     document.getElementById('time').innerText = "00:00";
 }
