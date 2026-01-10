@@ -17,37 +17,33 @@
             margin: 0;
             text-align: center;
         }
-        h1 { margin-bottom: 40px; font-size: 24px; letter-spacing: 1px; color: #aaa; }
+        h1 { margin-bottom: 30px; font-size: 24px; letter-spacing: 1px; color: #aaa; }
         
         .menu-btn {
             display: block;
             width: 80%;
-            max-width: 300px;
-            padding: 25px;
-            margin: 15px 0;
-            border-radius: 15px;
+            max-width: 320px;
+            padding: 20px;
+            margin: 12px 0;
+            border-radius: 12px;
             text-decoration: none;
             font-weight: bold;
-            font-size: 20px;
+            font-size: 18px;
             transition: transform 0.1s;
             border: 2px solid transparent;
+            position: relative;
         }
         .menu-btn:active { transform: scale(0.96); }
+        .desc { display: block; font-size: 12px; font-weight: normal; margin-top: 4px; opacity: 0.8; }
         
         /* 1. ECO MODE (Green) */
-        .btn-eco {
-            background: #1b4332;
-            color: #52b788;
-            border-color: #2d6a4f;
-        }
-        .desc { display: block; font-size: 12px; font-weight: normal; margin-top: 5px; opacity: 0.8; }
+        .btn-eco { background: #1b4332; color: #52b788; border-color: #2d6a4f; }
 
-        /* 2. ACTIVE CAM (Blue) */
-        .btn-cam {
-            background: #03045e;
-            color: #90e0ef;
-            border-color: #0077b6;
-        }
+        /* 2. PHOTO MODE (Blue) */
+        .btn-cam { background: #03045e; color: #90e0ef; border-color: #0077b6; }
+
+        /* 3. VIDEO MODE (Red/Orange) - NEW! */
+        .btn-vid { background: #5d0f0f; color: #ff9999; border-color: #8a1c1c; }
 
         .footer { position: absolute; bottom: 20px; font-size: 11px; color: #444; }
     </style>
@@ -61,12 +57,17 @@
         <span class="desc">Screen Off • Walking • Low Battery</span>
     </a>
 
-    <a href="active-cam.html?v=101" class="menu-btn btn-cam">
-        📸 ACTIVE CAM
-        <span class="desc">Screen On • Running • Photos/Video</span>
+    <a href="active-cam.html?v=102" class="menu-btn btn-cam">
+        📸 PHOTO RUN
+        <span class="desc">Screen On • Snapshots • Crash Proof</span>
     </a>
 
-    <div class="footer">v2.1 • MergingFields</div>
+    <a href="video-mode.html" class="menu-btn btn-vid">
+        📹 VIDEO RUN
+        <span class="desc">Continuous Recording • High Data</span>
+    </a>
+
+    <div class="footer">v2.2 • MergingFields</div>
 
 </body>
 </html>
