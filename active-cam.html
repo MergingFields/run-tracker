@@ -161,12 +161,13 @@
         let currentFacingMode = "environment"; 
         let isHighQuality = false; 
 
-        // --- NEW: POCKET MODE FUNCTION ---
+        // --- SAFE POCKET MODE ---
         function togglePocketMode(enable) {
+            // Force display update immediately
             if (enable) {
-                overlay.style.display = "flex"; // Show black screen
+                overlay.style.display = "flex";
             } else {
-                overlay.style.display = "none"; // Hide black screen
+                overlay.style.display = "none";
             }
         }
 
@@ -186,8 +187,9 @@
                 video.srcObject = stream;
                 camContainer.style.display = 'block'; 
             } catch (err) {
+                // FIX: Log error instead of freezing with Alert
                 console.warn("Camera Error:", err);
-                alert("Camera Error. Try 'Sys Cam' instead.");
+                document.getElementById('time').innerText = "CAM ERR"; 
             }
         }
 
@@ -222,6 +224,7 @@
 
         async function snapPhoto() {
             if (!stream) {
+                // Keep this alert because it requires user action anyway
                 alert("Camera not active! Start Run first.");
                 return;
             }

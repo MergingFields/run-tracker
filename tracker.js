@@ -96,13 +96,13 @@ function toggleTracking(start) {
             watchID = navigator.geolocation.watchPosition(
                 updatePosition,
                 (err) => {
-                    // NEW: Alert the user if GPS fails!
-                    alert("GPS Error: " + err.message + "\nCheck iPhone Settings > Privacy > Location Services");
+                    console.warn("GPS Error:", err);
+                    document.getElementById('dist').innerText = "GPS Lost";
                 },
                 { enableHighAccuracy: true, maximumAge: 1000 }
             );
         } else {
-            alert("GPS not supported on this browser.");
+            console.error("GPS not supported");
         }
 
         if (COMPASS_MODE === "CONTINUOUS") startCompassListener();
