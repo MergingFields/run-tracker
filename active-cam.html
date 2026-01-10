@@ -12,7 +12,7 @@
         /* Camera Viewfinder Styling */
         #cam-container {
             position: fixed;
-            bottom: 180px; /* Shifted up slightly */
+            bottom: 180px;
             left: 50%;
             transform: translateX(-50%);
             width: 95%;
@@ -22,7 +22,7 @@
             border-radius: 12px;
             overflow: hidden;
             border: 2px solid #fff;
-            display: none; /* Hidden until started */
+            display: none; 
             z-index: 1000;
         }
         #live-video {
@@ -30,19 +30,33 @@
             height: 100%;
             object-fit: cover;
         }
-        /* Buttons inside the camera view */
-        .cam-overlay-btn {
+        
+        /* Camera Overlay Buttons */
+        .cam-btn {
             position: absolute;
             bottom: 10px;
-            right: 10px;
-            background: rgba(0,0,0,0.5);
+            background: rgba(0,0,0,0.6);
             color: white;
             border: 1px solid white;
-            padding: 5px 10px;
+            padding: 5px 12px;
             border-radius: 15px;
             cursor: pointer;
             z-index: 1001;
+            font-size: 14px;
+            font-weight: bold;
         }
+        /* Switch Camera (Right Side) */
+        #btn-switch-cam { right: 10px; }
+        
+        /* Quality Toggle (Left Side) */
+        #btn-quality { left: 10px; }
+        
+        /* Active State for Quality Button */
+        .hq-active {
+            background: rgba(0, 200, 0, 0.7) !important;
+            border-color: #0f0 !important;
+        }
+
         #capture-canvas { display: none; }
         
         /* Grid for the two camera options */
@@ -60,7 +74,10 @@
     
     <div id="cam-container">
         <video id="live-video" autoplay playsinline muted></video>
-        <button class="cam-overlay-btn" onclick="switchCamera()">↻ Switch</button>
+        
+        <button id="btn-quality" class="cam-btn" onclick="toggleQuality()">SD</button>
+        
+        <button id="btn-switch-cam" class="cam-btn" onclick="switchCamera()">↻</button>
     </div>
     <canvas id="capture-canvas"></canvas>
 
@@ -99,20 +116,34 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
-    <script src="tracker.js?v=2"></script>
+    <script src="tracker.js?v=3"></script>
+
     <script>
         const video = document.getElementById('live-video');
         const canvas = document.getElementById('capture-canvas');
         const camContainer = document.getElementById('cam-container');
+        const qualityBtn = document.getElementById('btn-quality');
+        
         let stream = null;
-        let currentFacingMode = "environment"; // Default to rear camera
+        let currentFacingMode = "environment"; // Rear camera
+        let isHighQuality = false; // Default to SD (Small files)
 
         async function startCamera() {
             if (stream) stopCamera(); // Ensure clean restart
+
+            // DEFINE CONSTRAINTS BASED ON QUALITY MODE
+            const constraints = {
+                video: {
+                    facingMode: currentFacingMode,
+                    // If High Quality: Ask for 1080p (1920x1080)
+                    // If SD: Ask for VGA (640x480) or let browser decide default
+                    width: isHighQuality ? { ideal: 1920 } : { ideal: 640 },
+                    height: isHighQuality ? { ideal: 1080 } : { ideal: 480 }
+                }
+            };
+
             try {
-                stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: currentFacingMode } 
-                });
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
                 video.srcObject = stream;
                 camContainer.style.display = 'block'; 
             } catch (err) {
@@ -130,9 +161,26 @@
         }
 
         async function switchCamera() {
-            // Toggle mode
             currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
-            await startCamera(); // Restart with new mode
+            await startCamera(); 
+        }
+
+        async function toggleQuality() {
+            isHighQuality = !isHighQuality; // Flip state
+            
+            // Update Button UI
+            if (isHighQuality) {
+                qualityBtn.innerText = "HD";
+                qualityBtn.classList.add("hq-active");
+            } else {
+                qualityBtn.innerText = "SD";
+                qualityBtn.classList.remove("hq-active");
+            }
+
+            // Restart camera to apply new resolution
+            if (stream) {
+                await startCamera();
+            }
         }
 
         async function snapPhoto() {
@@ -141,7 +189,7 @@
                 return;
             }
 
-            // 1. Get Compass Heading
+            // 1. Get Compass Heading (uses shared logic)
             const heading = await getHeadingNow();
 
             // 2. Capture Frame
@@ -157,9 +205,13 @@
             
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-            // 3. Process Data
-            const imgData = canvas.toDataURL('image/jpeg', 0.7); 
-            addPhotoToTrack(imgData, heading); // Use shared logic
+            // 3. Process Data (COMPRESSION SETTING)
+            // If HD: Use 0.9 (90%) quality
+            // If SD: Use 0.6 (60%) quality
+            const quality = isHighQuality ? 0.9 : 0.6;
+            const imgData = canvas.toDataURL('image/jpeg', quality); 
+            
+            addPhotoToTrack(imgData, heading); 
 
             // 4. Flash Effect
             camContainer.style.border = "5px solid yellow";
