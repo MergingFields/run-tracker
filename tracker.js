@@ -10,29 +10,79 @@ let startTime = null;
 let lastPos = null;
 let totalDistance = 0;
 let timerInterval = null; 
+let db = null; // NEW: Database Connection
 
 // ==========================================
-// 1. SETUP MAP & RESTORE LOGIC
+// 1. DATABASE & RESTORE LOGIC (INDEXEDDB)
 // ==========================================
-const map = L.map('map').setView([0, 0], 2);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap contributors'
-}).addTo(map);
 
-const pathLayer = L.polyline([], {color: '#dc3545', weight: 5}).addTo(map);
+// Open "The Media Vault" (RunTrackerDB)
+function initDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open("RunTrackerDB", 1);
+        
+        request.onupgradeneeded = function(e) {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains("photos")) {
+                db.createObjectStore("photos", { keyPath: "timestamp" });
+            }
+        };
 
-// --- NEW: AUTO-RESTORE ON LOAD ---
-window.onload = function() {
-    restoreRunFromMemory();
+        request.onsuccess = function(e) {
+            db = e.target.result;
+            resolve(db);
+        };
+
+        request.onerror = function(e) {
+            console.error("DB Error:", e);
+            reject(e);
+        };
+    });
+}
+
+// Save a single photo to the Vault
+function savePhotoToDB(photoObj) {
+    if (!db) return;
+    const tx = db.transaction(["photos"], "readwrite");
+    const store = tx.objectStore("photos");
+    store.add(photoObj);
+}
+
+// Load all photos from the Vault (Crash Recovery)
+function loadPhotosFromDB() {
+    return new Promise((resolve) => {
+        if (!db) return resolve([]);
+        const tx = db.transaction(["photos"], "readonly");
+        const store = tx.objectStore("photos");
+        const request = store.getAll();
+        
+        request.onsuccess = function() {
+            resolve(request.result);
+        };
+    });
+}
+
+// Wipe the Vault (Reset)
+function clearPhotoDB() {
+    if (!db) return;
+    const tx = db.transaction(["photos"], "readwrite");
+    const store = tx.objectStore("photos");
+    store.clear();
+}
+
+// --- INITIALIZATION ---
+window.onload = async function() {
+    await initDB(); // Open Database First
+    restoreRunFromMemory(); // Then check for crashes
 };
 
-function restoreRunFromMemory() {
+async function restoreRunFromMemory() {
     const savedTrack = localStorage.getItem('run_track');
     const savedDist = localStorage.getItem('run_dist');
     const savedStart = localStorage.getItem('run_start');
 
     if (savedTrack && savedStart) {
-        const resume = confirm("⚠️ CRASH DETECTED ⚠️\nFound an unfinished run in memory.\n\nRestore GPS path?");
+        const resume = confirm("⚠️ CRASH DETECTED ⚠️\nFound an unfinished run.\n\nRestore GPS & Photos?");
         if (resume) {
             // 1. Restore Variables
             trackData = JSON.parse(savedTrack);
@@ -50,20 +100,49 @@ function restoreRunFromMemory() {
                 };
             }
 
-            // 3. Restore UI
+            // 3. RESTORE PHOTOS FROM DB (The Magic Step)
+            const savedPhotos = await loadPhotosFromDB();
+            photoData = savedPhotos;
+            
+            // Re-draw markers on map
+            photoData.forEach(p => {
+                // Reconstruct image from chunks
+                const imgData = p.src_chunks.join("");
+                
+                const photoIcon = L.divIcon({
+                    html: `<div style="background-image: url('${imgData}'); width: 40px; height: 40px;" class="photo-marker"></div>`,
+                    className: 'photo-marker-container',
+                    iconSize: [44, 44],
+                    iconAnchor: [22, 44]
+                });
+
+                L.marker([p.lat, p.lng], {icon: photoIcon})
+                    .addTo(map)
+                    .bindPopup(`<img src="${imgData}" style="width:100px;"><br>Heading: ${p.heading}°`);
+            });
+
+            // 4. Restore UI
             document.getElementById('dist').innerText = Math.round(totalDistance);
-            toggleTracking(false); // Ready to resume, but paused
+            toggleTracking(false); 
             document.getElementById('btn-start').innerText = "Resume Run";
             updateUI(false); 
-            
-            // 4. Update timer immediately
             updateTimeDisplay();
         } else {
-            // User chose to discard
             clearMemory();
+            clearPhotoDB(); // Wipe DB if user says "No"
         }
     }
 }
+
+// ==========================================
+// 2. MAP & UTILS
+// ==========================================
+const map = L.map('map').setView([0, 0], 2);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+}).addTo(map);
+
+const pathLayer = L.polyline([], {color: '#dc3545', weight: 5}).addTo(map);
 
 function saveToMemory() {
     if (!startTime) return;
@@ -83,62 +162,6 @@ function clearMemory() {
 }
 
 // ==========================================
-// 2. COMPASS LOGIC
-// ==========================================
-function toggleCompassMode() {
-    const checkbox = document.getElementById('compass-toggle');
-    const label = document.querySelector('.mode-label');
-    
-    if (checkbox.checked) {
-        COMPASS_MODE = "CONTINUOUS";
-        label.innerText = "Mode: Running (Continuous Compass)";
-        if (tracking) startCompassListener();
-    } else {
-        COMPASS_MODE = "DEMAND";
-        label.innerText = "Mode: Walking (Eco / Event-Based)";
-        stopCompassListener();
-    }
-}
-
-function startCompassListener() {
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        DeviceOrientationEvent.requestPermission().then(r => {
-            if (r === 'granted') window.addEventListener('deviceorientation', handleOrientation);
-        });
-    } else {
-        window.addEventListener('deviceorientation', handleOrientation);
-    }
-}
-
-function stopCompassListener() {
-    window.removeEventListener('deviceorientation', handleOrientation);
-}
-
-function handleOrientation(e) {
-    if (e.webkitCompassHeading) currentHeading = e.webkitCompassHeading;
-    else if (e.alpha) currentHeading = 360 - e.alpha;
-}
-
-function getHeadingNow() {
-    return new Promise((resolve) => {
-        if (COMPASS_MODE === "CONTINUOUS") {
-            resolve(currentHeading || 0);
-            return;
-        }
-        const handler = (e) => {
-            let h = e.webkitCompassHeading || (360 - e.alpha) || 0;
-            window.removeEventListener('deviceorientation', handler);
-            resolve(h);
-        };
-        window.addEventListener('deviceorientation', handler);
-        setTimeout(() => {
-            window.removeEventListener('deviceorientation', handler);
-            resolve(0);
-        }, 500);
-    });
-}
-
-// ==========================================
 // 3. TRACKING LOGIC
 // ==========================================
 function toggleTracking(start) {
@@ -147,19 +170,17 @@ function toggleTracking(start) {
 
     if (start) {
         if (!startTime) {
-            startTime = Date.now(); // Set start time if new run
-            saveToMemory(); // Initialize save
+            startTime = Date.now(); 
+            saveToMemory(); 
         }
         
         clearInterval(timerInterval);
         timerInterval = setInterval(updateTimeDisplay, 1000);
 
-        // Start GPS
         if (navigator.geolocation) {
             watchID = navigator.geolocation.watchPosition(
                 updatePosition,
                 (err) => {
-                    // SILENT ERROR HANDLING (No Alert to freeze Pocket Mode)
                     console.warn("GPS Error:", err);
                     document.getElementById('dist').innerText = "GPS Lost";
                 },
@@ -168,7 +189,7 @@ function toggleTracking(start) {
         } else {
             console.error("GPS not supported");
         }
-
+        
         if (COMPASS_MODE === "CONTINUOUS") startCompassListener();
 
     } else {
@@ -176,7 +197,7 @@ function toggleTracking(start) {
         watchID = null;
         clearInterval(timerInterval); 
         stopCompassListener();
-        saveToMemory(); // Force save on pause
+        saveToMemory(); 
     }
 }
 
@@ -192,9 +213,7 @@ function updatePosition(position) {
     const lat = position.coords.latitude;
     const lng = position.coords.longitude;
     
-    if (!lastPos) {
-        map.setView([lat, lng], 18);
-    }
+    if (!lastPos) map.setView([lat, lng], 18);
 
     let v_current = position.coords.speed || 0;
     
@@ -206,7 +225,6 @@ function updatePosition(position) {
     document.getElementById('vel').innerText = v_current.toFixed(1);
     document.getElementById('dist').innerText = Math.round(totalDistance);
     
-    // Map & Data
     pathLayer.addLatLng([lat, lng]);
     
     trackData.push({
@@ -218,8 +236,6 @@ function updatePosition(position) {
     });
 
     lastPos = { latitude: lat, longitude: lng, speed: v_current };
-    
-    // --- NEW: AUTO-SAVE ON EVERY STEP ---
     saveToMemory();
 }
 
@@ -250,16 +266,19 @@ function addPhotoToTrack(imgData, heading) {
         .addTo(map)
         .bindPopup(`<img src="${imgData}" style="width:100px;"><br>Heading: ${Math.round(heading)}°`);
     
-    photoData.push({
+    // Create the photo object
+    const newPhoto = {
         lat: lat,
         lng: lng,
         heading: Math.round(heading),
         src_chunks: chunkString(imgData, 100),
         timestamp: Date.now()
-    });
+    };
+
+    photoData.push(newPhoto);
     
-    // NOTE: We do NOT save photoData to localStorage (too big).
-    // Photos are currently RAM only.
+    // NEW: Save to Media Vault immediately
+    savePhotoToDB(newPhoto);
 }
 
 async function handlePhoto(input) {
@@ -275,17 +294,54 @@ async function handlePhoto(input) {
 }
 
 // ==========================================
-// 5. EXPORT & UTILS
+// 5. COMPASS & EXPORT
 // ==========================================
+function toggleCompassMode() {
+    const checkbox = document.getElementById('compass-toggle');
+    const label = document.querySelector('.mode-label');
+    if (checkbox.checked) {
+        COMPASS_MODE = "CONTINUOUS";
+        label.innerText = "Mode: Running (Continuous Compass)";
+        if (tracking) startCompassListener();
+    } else {
+        COMPASS_MODE = "DEMAND";
+        label.innerText = "Mode: Walking (Eco)";
+        stopCompassListener();
+    }
+}
+function startCompassListener() {
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        DeviceOrientationEvent.requestPermission().then(r => {
+            if (r === 'granted') window.addEventListener('deviceorientation', handleOrientation);
+        });
+    } else {
+        window.addEventListener('deviceorientation', handleOrientation);
+    }
+}
+function stopCompassListener() { window.removeEventListener('deviceorientation', handleOrientation); }
+function handleOrientation(e) {
+    if (e.webkitCompassHeading) currentHeading = e.webkitCompassHeading;
+    else if (e.alpha) currentHeading = 360 - e.alpha;
+}
+function getHeadingNow() {
+    return new Promise((resolve) => {
+        if (COMPASS_MODE === "CONTINUOUS") { resolve(currentHeading || 0); return; }
+        const handler = (e) => {
+            let h = e.webkitCompassHeading || (360 - e.alpha) || 0;
+            window.removeEventListener('deviceorientation', handler);
+            resolve(h);
+        };
+        window.addEventListener('deviceorientation', handler);
+        setTimeout(() => { window.removeEventListener('deviceorientation', handler); resolve(0); }, 500);
+    });
+}
+
 function downloadRun(includePhotos) {
     const count = photoData.length;
-    // Basic confirm to ensure user knows what they are saving
-    if (includePhotos && count === 0) {
-        alert("Notice: No photos in memory to save.");
-    }
+    if (includePhotos && count === 0) alert("Notice: No photos in memory to save.");
 
     const dataObj = {
-        version: "2.0",
+        version: "2.1",
         date: new Date().toISOString(),
         total_dist: totalDistance,
         duration: document.getElementById('time').innerText,
@@ -311,7 +367,7 @@ function saveAndReset() {
     downloadRun(true); 
     setTimeout(() => {
         if(confirm("Run saved? Clear memory and start new?")) {
-            clearMemory(); // Wipes the safety backup
+            resetRun(); // Clean up logic moved to function
             window.location.reload(); 
         }
     }, 1000); 
@@ -324,7 +380,8 @@ function resetRun() {
     pathLayer.setLatLngs([]);
     totalDistance = 0;
     lastPos = null;
-    clearMemory(); // Clear old crash data on new run
+    clearMemory(); 
+    clearPhotoDB(); // NEW: Wipe the Vault
     document.getElementById('dist').innerText = "0";
     document.getElementById('time').innerText = "00:00";
 }
