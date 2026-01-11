@@ -2,71 +2,73 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Video Satellite 7.0 (Zero-Point Fix)</title>
+    <title>Video Satellite 8.0 (Debug Mode)</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         body { font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; background: #111; color: #eee; }
-        #main-container { display: flex; flex: 1; overflow: hidden; }
         
+        #main-container { display: flex; flex: 1; overflow: hidden; }
         #playlist-section { width: 250px; background: #1a1a1a; border-right: 1px solid #333; display: flex; flex-direction: column; overflow-y: auto; }
-        .playlist-header { padding: 10px; background: #222; font-weight: bold; font-size: 0.9em; color: #aaa; border-bottom: 1px solid #444; }
-        .clip-item { padding: 10px; border-bottom: 1px solid #2a2a2a; cursor: pointer; transition: background 0.2s; font-size: 0.85em; color: #ccc; }
-        .clip-item:hover { background: #333; }
+        .clip-item { padding: 10px; border-bottom: 1px solid #2a2a2a; cursor: pointer; color: #ccc; font-size: 0.85em; }
         .clip-item.active { background: #004466; color: #fff; border-left: 4px solid #4facfe; }
 
-        #video-section { flex: 2; background: #000; position: relative; display: flex; align-items: center; justify-content: center; border-right: 1px solid #333; }
-        video { width: 100%; height: 100%; max-height: 100vh; object-fit: contain; }
+        #video-section { flex: 2; background: #000; position: relative; }
+        video { width: 100%; height: 100%; object-fit: contain; }
 
-        #map-section { flex: 1; min-width: 300px; position: relative; }
+        #map-section { flex: 1; min-width: 300px; }
         #map { width: 100%; height: 100%; background: #222; }
 
-        #controls { padding: 10px; background: #222; border-bottom: 1px solid #444; display: flex; gap: 15px; align-items: center; z-index: 1000; flex-wrap: wrap; }
-        .btn-upload { background: #444; color: #fff; border: 1px solid #666; padding: 5px 12px; border-radius: 4px; cursor: pointer; font-size: 0.9em; }
-        .btn-upload:hover { background: #666; }
-        #fileInput { display: none; }
-
-        .hud { font-family: 'Consolas', monospace; display: flex; gap: 15px; margin-left: auto; }
+        #controls { padding: 10px; background: #222; display: flex; gap: 15px; flex-wrap: wrap; align-items: center; border-bottom: 1px solid #444; }
+        .btn { background: #444; color: #fff; border: 1px solid #666; padding: 5px 10px; cursor: pointer; border-radius: 4px; }
+        .hud { margin-left: auto; display: flex; gap: 15px; font-family: 'Consolas', monospace; }
         .stat-item { display: flex; flex-direction: column; align-items: flex-end; }
-        .stat-val { font-size: 1.1em; font-weight: bold; color: #4facfe; }
+        .stat-val { color: #4facfe; font-weight: bold; font-size: 1.1em; }
         .stat-lbl { font-size: 0.7em; color: #888; }
         
-        .sync-adj { display: flex; align-items: center; gap: 5px; font-size: 0.8em; color: #aaa; border-left: 1px solid #444; padding-left: 15px; }
-        input[type=range] { width: 80px; accent-color: #4facfe; }
+        /* DEBUG PANEL */
+        #debug-panel { 
+            position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.8); 
+            padding: 10px; font-family: monospace; font-size: 10px; color: #0f0; 
+            pointer-events: none; z-index: 2000; border: 1px solid #0f0; display: none;
+        }
 
-        .runner-icon { position: relative; width: 24px; height: 24px; }
-        .runner-dot { width: 16px; height: 16px; background: #4facfe; border: 2px solid white; border-radius: 50%; position: absolute; top: 4px; left: 4px; box-shadow: 0 0 5px black; }
-        .runner-arrow { position: absolute; top: -6px; left: 50%; margin-left: -6px; width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-bottom: 10px solid #4facfe; filter: drop-shadow(0 0 1px black); }
+        .runner-icon { width: 20px; height: 20px; background: #4facfe; border: 2px solid white; border-radius: 50%; box-shadow: 0 0 5px black; }
+        .sync-adj { display: flex; align-items: center; gap: 5px; font-size: 0.8em; color: #aaa; border-left: 1px solid #444; padding-left: 15px; }
     </style>
 </head>
 <body>
 
+    <div id="debug-panel">
+        <div>TRACK START: <span id="dbg-track">0</span></div>
+        <div>VIDEO START: <span id="dbg-video">0</span></div>
+        <div>OFFSET: <span id="dbg-offset">0</span></div>
+        <div>GLOBAL T: <span id="dbg-global">0</span></div>
+    </div>
+
     <div id="controls">
-        <button class="btn-upload" onclick="document.getElementById('fileInput').click()">📂 Load Files (All)</button>
-        <input type="file" id="fileInput" multiple accept=".json, .webm, .mp4, .mov">
+        <button class="btn" onclick="document.getElementById('fileInput').click()">📂 Load Files</button>
+        <input type="file" id="fileInput" multiple accept=".json, .webm, .mp4, .mov" style="display:none;">
         
-        <div class="sync-adj" title="Adjust if marker is not synced">
+        <button class="btn" onclick="toggleDebug()">🐞 Debug</button>
+
+        <div class="sync-adj">
             <span>Sync:</span>
-            <input type="range" id="syncOffset" min="-60" max="60" step="1" value="0">
+            <input type="range" id="syncOffset" min="-300" max="300" step="1" value="0">
             <span id="offsetVal">0s</span>
         </div>
 
         <div class="hud">
-            <div class="stat-item"><span class="stat-val" id="dispTime">00:00</span><span class="stat-lbl">GPS TIME</span></div>
-            <div class="stat-item"><span class="stat-val" id="dispVel">0.0</span><span class="stat-lbl">SPEED</span></div>
-            <div class="stat-item"><span class="stat-val" id="dispAcc" style="color:#ff0055;">0.0</span><span class="stat-lbl">ACCEL</span></div>
-            <div class="stat-item"><span class="stat-val" id="dispHead" style="color:#ffd700;">0°</span><span class="stat-lbl">HEADING</span></div>
+            <div class="stat-item"><span class="stat-val" id="dispTime">00:00</span><span class="stat-lbl">GPS T</span></div>
+            <div class="stat-item"><span class="stat-val" id="dispVel">0.0</span><span class="stat-lbl">KM/H</span></div>
+            <div class="stat-item"><span class="stat-val" id="dispAcc" style="color:#ff0055;">0.0</span><span class="stat-lbl">ACC</span></div>
+            <div class="stat-item"><span class="stat-val" id="dispHead" style="color:#ffd700;">0°</span><span class="stat-lbl">HEAD</span></div>
         </div>
     </div>
 
     <div id="main-container">
-        <div id="playlist-section">
-            <div class="playlist-header">CLIPS</div>
-            <div id="playlist-content" style="padding:10px; color:#666;">No files</div>
-        </div>
-        <div id="video-section">
-            <video id="main-player" controls playsinline></video>
-        </div>
+        <div id="playlist-section"><div id="playlist-content" style="padding:10px;">No files</div></div>
+        <div id="video-section"><video id="main-player" controls playsinline></video></div>
         <div id="map-section"><div id="map"></div></div>
     </div>
 
@@ -75,21 +77,19 @@
         const map = L.map('map', { zoomControl: false }).setView([0, 0], 2);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
         const pathLayer = L.polyline([], {color: '#4facfe', weight: 4, opacity: 0.8}).addTo(map);
-        
-        const runnerIcon = L.divIcon({
-            className: '',
-            html: `<div class="runner-icon"><div class="runner-dot"></div><div id="map-arrow" class="runner-arrow"></div></div>`,
-            iconSize: [24, 24], iconAnchor: [12, 12]
-        });
         let syncMarker = null;
-
+        
         let trackPoints = [];
-        let trackStartEpoch = 0; // The true "Zero" time of the run
+        let trackStartEpoch = 0;
         let videoClips = [];
         let currentClipIndex = -1;
-        
-        const syncChannel = new BroadcastChannel('song_sync_channel');
         const player = document.getElementById('main-player');
+        const syncChannel = new BroadcastChannel('song_sync_channel');
+
+        function toggleDebug() {
+            const p = document.getElementById('debug-panel');
+            p.style.display = (p.style.display === 'none') ? 'block' : 'none';
+        }
 
         document.getElementById('syncOffset').addEventListener('input', (e) => {
             document.getElementById('offsetVal').innerText = e.target.value + 's';
@@ -97,78 +97,64 @@
 
         document.getElementById('fileInput').addEventListener('change', async (e) => {
             const files = Array.from(e.target.files);
-            let jsonFile = files.find(f => f.name.toLowerCase().endsWith('.json'));
-            let vidFiles = files.filter(f => f.name.match(/\.(webm|mp4|mov)$/i));
+            const jsonFile = files.find(f => f.name.toLowerCase().endsWith('.json'));
+            const vidFiles = files.filter(f => f.name.match(/\.(webm|mp4|mov)$/i));
 
-            if (!jsonFile || vidFiles.length === 0) { alert("Need 1 JSON and at least 1 Video."); return; }
+            if (!jsonFile || vidFiles.length === 0) { alert("Need JSON + Video"); return; }
 
+            // 1. PROCESS TRACK
             const text = await jsonFile.text();
             try {
                 const data = JSON.parse(text);
                 trackPoints = data.track_points || data.points;
                 
-                // --- FIX: DETERMINE TRUE START TIME ---
-                // We MUST use the first GPS point's absolute time, NOT the file save date.
-                // The file save date (data.date) is often minutes AFTER the run started.
-                if (trackPoints.length > 0 && trackPoints[0].absTime) {
-                    // Use the very first recorded moment as "T=0"
-                    trackStartEpoch = trackPoints[0].absTime; 
-                    
-                    // Optional: Adjust so T=0 is exactly the 'time' property of first point?
-                    // trackPoints[0].time is usually ~0, but let's be safe:
-                    // We will align everything to trackStartEpoch.
-                } else if (data.date) {
-                    console.warn("No point timestamps found. Using File Date (May result in negative time!)");
-                    trackStartEpoch = new Date(data.date).getTime();
+                // CRITICAL: Find absolute start time of the GPS track
+                if (trackPoints[0] && trackPoints[0].absTime) {
+                    trackStartEpoch = trackPoints[0].absTime;
+                    console.log("Track Start (Epoch):", trackStartEpoch);
+                } else {
+                    alert("Warning: JSON lacks 'absTime'. Sync will fail.");
+                    trackStartEpoch = Date.now();
                 }
 
                 processTrack();
-            } catch(err) { alert("JSON Error: " + err.message); return; }
+            } catch(err) { alert("JSON Error"); return; }
 
-            // Parse Video Filenames
+            // 2. PROCESS VIDEOS
             videoClips = vidFiles.map(f => {
-                let dateObj = null;
-                // Regex: Video_YYYY-MM-DDT... or Video_YYYY-MM-DD_...
+                let vidEpoch = 0;
+                // Regex for Video_YYYY-MM-DD-HH-MM-SS
                 const match = f.name.match(/Video_(\d{4}-\d{2}-\d{2})[T_](\d{2})-(\d{2})-(\d{2})/);
                 
                 if (match) {
                     const isoStr = `${match[1]}T${match[2]}:${match[3]}:${match[4]}`;
-                    dateObj = new Date(isoStr);
+                    vidEpoch = new Date(isoStr).getTime();
                 } else {
-                    dateObj = new Date(f.lastModified);
-                }
-
-                // Calculate offset relative to the TRUE Start Epoch
-                // If video started 1 min into run, offset = 60s.
-                let offset = (dateObj.getTime() - trackStartEpoch) / 1000;
-                
-                // Safety: If video file timestamp is BEFORE the first GPS point, clamp to 0
-                // (This happens if you hit Record Video slightly before the GPS got a fix)
-                if (offset < 0) {
-                     console.log(`Video ${f.name} starts before GPS. Adjusting offset to 0.`);
-                     // We don't force 0, we let it be negative, but we handle it in playback
+                    // Fallback to file date (often unreliable if file moved/copied)
+                    vidEpoch = f.lastModified; 
                 }
 
                 return {
                     file: f,
                     name: f.name,
-                    startTimeMs: dateObj.getTime(),
-                    offsetSeconds: offset
+                    startTimeMs: vidEpoch,
+                    // Offset = Video Start - GPS Start
+                    offsetSeconds: (vidEpoch - trackStartEpoch) / 1000
                 };
             });
 
             videoClips.sort((a, b) => a.startTimeMs - b.startTimeMs);
-            buildPlaylistUI();
+            buildPlaylist();
             loadClip(0);
         });
 
-        function buildPlaylistUI() {
+        function buildPlaylist() {
             const c = document.getElementById('playlist-content');
             c.innerHTML = '';
             videoClips.forEach((clip, i) => {
                 const div = document.createElement('div');
                 div.className = 'clip-item';
-                div.innerHTML = `<div>${clip.name}</div><div style="font-size:0.7em; color:#888;">T+ ${clip.offsetSeconds.toFixed(1)}s</div>`;
+                div.innerHTML = `<div>${clip.name}</div><div style="font-size:0.7em; color:#888;">Offset: ${clip.offsetSeconds.toFixed(1)}s</div>`;
                 div.onclick = () => loadClip(i);
                 div.id = `clip-${i}`;
                 c.appendChild(div);
@@ -178,19 +164,28 @@
         function loadClip(i) {
             if (i < 0 || i >= videoClips.length) return;
             currentClipIndex = i;
+            
             document.querySelectorAll('.clip-item').forEach(d => d.classList.remove('active'));
             document.getElementById(`clip-${i}`).classList.add('active');
+            
             player.src = URL.createObjectURL(videoClips[i].file);
+            // Reset offset slider to 0 on new clip to avoid confusion
+            document.getElementById('syncOffset').value = 0;
+            document.getElementById('offsetVal').innerText = "0s";
+            
             player.play();
         }
 
         function processTrack() {
             const latLngs = trackPoints.map(p => [p.lat||p.latitude, p.lng||p.longitude]);
             pathLayer.setLatLngs(latLngs);
-            if (latLngs.length > 0) {
+            if(latLngs.length>0) {
                 map.fitBounds(pathLayer.getBounds());
                 if(syncMarker) map.removeLayer(syncMarker);
-                syncMarker = L.marker(latLngs[0], {icon: runnerIcon, zIndexOffset:1000}).addTo(map);
+                syncMarker = L.marker(latLngs[0], {
+                    icon: L.divIcon({className:'', html:`<div class="runner-icon"></div>`, iconSize:[20,20]}),
+                    zIndexOffset:1000
+                }).addTo(map);
             }
         }
 
@@ -198,24 +193,24 @@
             if (currentClipIndex === -1 || trackPoints.length < 2) return;
             
             const clip = videoClips[currentClipIndex];
-            const manualOffset = parseFloat(document.getElementById('syncOffset').value);
+            const manual = parseFloat(document.getElementById('syncOffset').value);
             
-            // The magic formula:
-            // "Where on the GPS path (seconds from start)" = 
-            // Video Start Offset + Video Current Time + Manual Adjustment
-            // Note: We add trackPoints[0].time just in case the first point wasn't exactly 0.0
-            const firstPointRelTime = trackPoints[0].time || 0;
-            const globalTime = firstPointRelTime + clip.offsetSeconds + player.currentTime + manualOffset;
+            // GLOBAL TIME CALCULATION
+            // First point relative time + Clip Offset + Video Playhead + Manual Slider
+            const firstRel = trackPoints[0].time || 0; 
+            const globalTime = firstRel + clip.offsetSeconds + player.currentTime + manual;
 
-            syncChannel.postMessage({ type: 'sync_time', time: globalTime });
+            // Update Debug Panel
+            document.getElementById('dbg-track').innerText = trackStartEpoch;
+            document.getElementById('dbg-video').innerText = clip.startTimeMs;
+            document.getElementById('dbg-offset').innerText = clip.offsetSeconds.toFixed(1);
+            document.getElementById('dbg-global').innerText = globalTime.toFixed(1);
 
             updateMapPosition(globalTime);
-            
-            // Display Time (Handle negatives nicely)
-            let safeTime = globalTime;
-            if (safeTime < 0) safeTime = 0; 
-            const m = Math.floor(safeTime/60);
-            const s = Math.floor(safeTime%60);
+            syncChannel.postMessage({ type: 'sync_time', time: globalTime });
+
+            const m = Math.floor(Math.max(0, globalTime)/60);
+            const s = Math.floor(Math.max(0, globalTime)%60);
             document.getElementById('dispTime').innerText = `${m}:${s.toString().padStart(2,'0')}`;
         };
 
@@ -224,7 +219,6 @@
         };
 
         function updateMapPosition(t) {
-            // Find correct segment
             let idx = -1;
             for(let i=0; i < trackPoints.length-1; i++) {
                 if (t >= trackPoints[i].time && t <= trackPoints[i+1].time) {
@@ -233,35 +227,26 @@
             }
 
             if (idx !== -1) {
-                const p1 = trackPoints[idx];
-                const p2 = trackPoints[idx+1];
+                const p1 = trackPoints[idx]; const p2 = trackPoints[idx+1];
                 const f = (t - p1.time) / (p2.time - p1.time); 
-
-                const lat = (p1.lat||p1.latitude) + ((p2.lat||p2.latitude) - (p1.lat||p1.latitude)) * f;
-                const lng = (p1.lng||p1.longitude) + ((p2.lng||p2.longitude) - (p1.lng||p1.longitude)) * f;
+                
+                const lat = (p1.lat||p1.latitude) + ((p2.lat||p2.latitude)-(p1.lat||p1.latitude))*f;
+                const lng = (p1.lng||p1.longitude) + ((p2.lng||p2.longitude)-(p1.lng||p1.longitude))*f;
                 
                 if(syncMarker) syncMarker.setLatLng([lat, lng]);
-                // Only pan if near edge
                 if(!map.getBounds().contains([lat,lng])) map.panTo([lat,lng]);
 
-                // DATA
-                const v = (p1.vel + (p2.vel - p1.vel) * f) * 3.6; // Speed km/h
-                const a = (p1.acc||0) + ((p2.acc||0) - (p1.acc||0)) * f; // Acc m/s^2
+                const v = (p1.vel + (p2.vel - p1.vel) * f) * 3.6;
+                const a = (p1.acc||0) + ((p2.acc||0) - (p1.acc||0)) * f;
                 
-                // HEADING
-                let h1 = p1.heading || 0;
-                let h2 = p2.heading || 0;
-                if (h2 - h1 > 180) h2 -= 360;
-                if (h1 - h2 > 180) h1 -= 360;
-                let h = h1 + (h2 - h1) * f;
-                if (h < 0) h += 360;
+                // Heading
+                let h1 = p1.heading||0; let h2 = p2.heading||0;
+                if (h2 - h1 > 180) h2 -= 360; if (h1 - h2 > 180) h1 -= 360;
+                let h = h1 + (h2 - h1) * f; if (h < 0) h += 360;
 
                 document.getElementById('dispVel').innerText = v.toFixed(1);
                 document.getElementById('dispAcc').innerText = a.toFixed(2);
-                document.getElementById('dispHead').innerText = Math.round(h) + "°";
-
-                const arrow = document.getElementById('map-arrow');
-                if(arrow) arrow.style.transform = `rotate(${h}deg)`;
+                document.getElementById('dispHead').innerText = Math.round(h)+"°";
             }
         }
     </script>
