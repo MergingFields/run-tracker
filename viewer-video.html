@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Video Satellite 4.0 (Playlist Mode)</title>
+    <title>Video Satellite 5.0 (Pro Stats)</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
@@ -11,21 +11,14 @@
         /* --- LAYOUT --- */
         #main-container { display: flex; flex: 1; overflow: hidden; }
         
-        /* PLAYLIST SIDEBAR */
-        #playlist-section {
-            width: 250px; background: #1a1a1a; border-right: 1px solid #333;
-            display: flex; flex-direction: column; overflow-y: auto;
-        }
+        /* SIDEBAR */
+        #playlist-section { width: 250px; background: #1a1a1a; border-right: 1px solid #333; display: flex; flex-direction: column; overflow-y: auto; }
         .playlist-header { padding: 10px; background: #222; font-weight: bold; font-size: 0.9em; color: #aaa; border-bottom: 1px solid #444; }
-        .clip-item {
-            padding: 10px; border-bottom: 1px solid #2a2a2a; cursor: pointer; transition: background 0.2s;
-            font-size: 0.85em; color: #ccc;
-        }
+        .clip-item { padding: 10px; border-bottom: 1px solid #2a2a2a; cursor: pointer; transition: background 0.2s; font-size: 0.85em; color: #ccc; }
         .clip-item:hover { background: #333; }
         .clip-item.active { background: #004466; color: #fff; border-left: 4px solid #4facfe; }
-        .clip-time { font-size: 0.8em; color: #888; margin-top: 2px; }
 
-        /* VIDEO STAGE */
+        /* VIDEO */
         #video-section { flex: 2; background: #000; position: relative; display: flex; align-items: center; justify-content: center; border-right: 1px solid #333; }
         video { width: 100%; height: 100%; max-height: 100vh; object-fit: contain; }
 
@@ -39,48 +32,59 @@
         .btn-upload:hover { background: #666; }
         #fileInput { display: none; }
 
+        /* HUD STATS */
         .hud { font-family: 'Consolas', monospace; display: flex; gap: 15px; margin-left: auto; }
         .stat-item { display: flex; flex-direction: column; align-items: flex-end; }
         .stat-val { font-size: 1.1em; font-weight: bold; color: #4facfe; }
         .stat-lbl { font-size: 0.7em; color: #888; }
         
-        /* SYNC MARKER */
-        .sync-marker { width: 16px; height: 16px; background: #ff0055; border: 2px solid white; border-radius: 50%; box-shadow: 0 0 10px #ff0055; }
-        
-        /* GAP INDICATOR */
-        .time-gap-msg {
-            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
-            background: rgba(255, 165, 0, 0.8); color: black; padding: 5px 15px;
-            border-radius: 20px; font-weight: bold; display: none; pointer-events: none;
+        /* SYNC SLIDER */
+        .sync-adj { display: flex; align-items: center; gap: 5px; font-size: 0.8em; color: #aaa; border-left: 1px solid #444; padding-left: 15px; }
+        input[type=range] { width: 80px; accent-color: #4facfe; }
+
+        /* ROTATING MARKER */
+        .runner-icon { position: relative; width: 24px; height: 24px; }
+        .runner-dot { 
+            width: 16px; height: 16px; background: #4facfe; border: 2px solid white; 
+            border-radius: 50%; position: absolute; top: 4px; left: 4px; box-shadow: 0 0 5px black; 
+        }
+        .runner-arrow {
+            position: absolute; top: -6px; left: 50%; margin-left: -6px;
+            width: 0; height: 0; border-left: 6px solid transparent; 
+            border-right: 6px solid transparent; border-bottom: 10px solid #4facfe;
+            filter: drop-shadow(0 0 1px black);
         }
     </style>
 </head>
 <body>
 
     <div id="controls">
-        <button class="btn-upload" onclick="document.getElementById('fileInput').click()">📂 Load Files (Select All)</button>
+        <button class="btn-upload" onclick="document.getElementById('fileInput').click()">📂 Load Files (All)</button>
         <input type="file" id="fileInput" multiple accept=".json, .webm, .mp4, .mov">
+        
+        <div class="sync-adj" title="If marker is ahead/behind video, adjust this">
+            <span>Sync Offset:</span>
+            <input type="range" id="syncOffset" min="-5" max="5" step="0.1" value="0">
+            <span id="offsetVal">0s</span>
+        </div>
 
         <div class="hud">
             <div class="stat-item"><span class="stat-val" id="dispTime">00:00</span><span class="stat-lbl">GPS TIME</span></div>
-            <div class="stat-item"><span class="stat-val" id="dispVel">0.0</span><span class="stat-lbl">KM/H</span></div>
+            <div class="stat-item"><span class="stat-val" id="dispVel">0.0</span><span class="stat-lbl">SPEED (KM/H)</span></div>
+            <div class="stat-item"><span class="stat-val" id="dispAcc" style="color:#ff0055;">0.0</span><span class="stat-lbl">ACCEL</span></div>
+            <div class="stat-item"><span class="stat-val" id="dispHead" style="color:#ffd700;">0°</span><span class="stat-lbl">HEADING</span></div>
         </div>
     </div>
 
     <div id="main-container">
         <div id="playlist-section">
-            <div class="playlist-header">CLIPS FOUND</div>
-            <div id="playlist-content" style="padding:10px; color:#666;">No files loaded</div>
+            <div class="playlist-header">CLIPS</div>
+            <div id="playlist-content" style="padding:10px; color:#666;">No files</div>
         </div>
-
         <div id="video-section">
             <video id="main-player" controls playsinline></video>
-            <div id="gap-msg" class="time-gap-msg">Jumped forward in time</div>
         </div>
-
-        <div id="map-section">
-            <div id="map"></div>
-        </div>
+        <div id="map-section"><div id="map"></div></div>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -89,168 +93,139 @@
         const map = L.map('map', { zoomControl: false }).setView([0, 0], 2);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
         const pathLayer = L.polyline([], {color: '#4facfe', weight: 4, opacity: 0.8}).addTo(map);
-        let syncMarker = null;
-        let trackPoints = [];
-        let trackStartTime = 0; // Epoch ms
         
-        // Playlist State
-        let videoClips = []; // { file, startTimeMs, duration }
+        // Custom Rotating Marker
+        const runnerIcon = L.divIcon({
+            className: '',
+            html: `<div class="runner-icon"><div class="runner-dot"></div><div id="map-arrow" class="runner-arrow"></div></div>`,
+            iconSize: [24, 24], iconAnchor: [12, 12]
+        });
+        let syncMarker = null;
+
+        let trackPoints = [];
+        let trackStartTime = 0;
+        let videoClips = [];
         let currentClipIndex = -1;
         
         const syncChannel = new BroadcastChannel('song_sync_channel');
         const player = document.getElementById('main-player');
 
-        // --- FILE HANDLING ---
+        // --- OFFSET SLIDER ---
+        document.getElementById('syncOffset').addEventListener('input', (e) => {
+            document.getElementById('offsetVal').innerText = e.target.value + 's';
+        });
+
+        // --- FILE PARSER ---
         document.getElementById('fileInput').addEventListener('change', async (e) => {
             const files = Array.from(e.target.files);
             let jsonFile = files.find(f => f.name.toLowerCase().endsWith('.json'));
             let vidFiles = files.filter(f => f.name.match(/\.(webm|mp4|mov)$/i));
 
-            if (!jsonFile) { alert("Missing .json track file!"); return; }
-            if (vidFiles.length === 0) { alert("Missing video files!"); return; }
+            if (!jsonFile || vidFiles.length === 0) { alert("Need 1 JSON and at least 1 Video."); return; }
 
-            // 1. Load JSON
             const text = await jsonFile.text();
             try {
                 const data = JSON.parse(text);
                 trackPoints = data.track_points || data.points;
                 
-                // Determine Absolute Start Time of the Run
-                // Use the first point's absolute timestamp if available, else infer
-                if (trackPoints[0].absTime) {
-                    trackStartTime = trackPoints[0].absTime;
-                } else if (data.date) {
-                    trackStartTime = new Date(data.date).getTime();
-                } else {
-                    // Fallback: Assume filenames are absolute and we have no track ref? 
-                    // No, usually track points have relative time. 
-                    // Let's assume trackPoints[0].time is 0 relative to trackStartTime
-                    // This is tricky if no metadata.
-                    alert("Warning: JSON missing absolute timestamps. Sync might be off.");
-                    trackStartTime = Date.now(); 
-                }
-                
+                // Try to find absolute start time
+                if (trackPoints[0].absTime) trackStartTime = trackPoints[0].absTime;
+                else if (data.date) trackStartTime = new Date(data.date).getTime();
+                else trackStartTime = 0; // Fallback
+
                 processTrack();
             } catch(err) { alert("JSON Error: " + err.message); return; }
 
-            // 2. Process Videos (Parse Filenames)
+            // Parse Video Filenames
             videoClips = vidFiles.map(f => {
-                // Filename: Video_2025-01-11T14-30-05.webm
-                // We need to extract the date string
                 let dateObj = null;
+                // Regex for "Video_YYYY-MM-DD-HH-MM-SS" or similar
+                const match = f.name.match(/Video_(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})/);
                 
-                // Try standard ISO regex first
-                const match = f.name.match(/Video_(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})/);
                 if (match) {
-                    // Reconstruct to YYYY-MM-DDTHH:MM:SS (standard ISO)
                     const isoStr = `${match[1]}T${match[2]}:${match[3]}:${match[4]}`;
                     dateObj = new Date(isoStr);
                 } else {
-                    // Fallback: Just assume it plays at start if name is weird
-                    dateObj = new Date(trackStartTime); 
+                    // Fallback to file LastModified if name fails (risky but better than nothing)
+                    dateObj = new Date(f.lastModified);
                 }
 
                 return {
                     file: f,
                     name: f.name,
                     startTimeMs: dateObj.getTime(),
+                    // Calculate relative offset from run start (in seconds)
                     offsetSeconds: (dateObj.getTime() - trackStartTime) / 1000
                 };
             });
 
-            // Sort clips by time
             videoClips.sort((a, b) => a.startTimeMs - b.startTimeMs);
-            
             buildPlaylistUI();
             loadClip(0);
         });
 
         function buildPlaylistUI() {
-            const container = document.getElementById('playlist-content');
-            container.innerHTML = '';
-            
-            videoClips.forEach((clip, index) => {
+            const c = document.getElementById('playlist-content');
+            c.innerHTML = '';
+            videoClips.forEach((clip, i) => {
                 const div = document.createElement('div');
                 div.className = 'clip-item';
-                div.innerHTML = `
-                    <div>${clip.name}</div>
-                    <div class="clip-time">Starts at ${formatRunTime(clip.offsetSeconds)}</div>
-                `;
-                div.onclick = () => loadClip(index);
-                div.id = `clip-${index}`;
-                container.appendChild(div);
+                div.innerHTML = `<div>${clip.name}</div><div style="font-size:0.7em; color:#888;">Offset: ${clip.offsetSeconds.toFixed(1)}s</div>`;
+                div.onclick = () => loadClip(i);
+                div.id = `clip-${i}`;
+                c.appendChild(div);
             });
         }
 
-        function loadClip(index) {
-            if (index < 0 || index >= videoClips.length) return;
-            
-            currentClipIndex = index;
-            const clip = videoClips[index];
-            
-            // Highlight UI
+        function loadClip(i) {
+            if (i < 0 || i >= videoClips.length) return;
+            currentClipIndex = i;
             document.querySelectorAll('.clip-item').forEach(d => d.classList.remove('active'));
-            document.getElementById(`clip-${index}`).classList.add('active');
-
-            // Load Video
-            player.src = URL.createObjectURL(clip.file);
+            document.getElementById(`clip-${i}`).classList.add('active');
+            player.src = URL.createObjectURL(videoClips[i].file);
             player.play();
         }
 
-        // --- MAP LOGIC ---
         function processTrack() {
             const latLngs = trackPoints.map(p => [p.lat||p.latitude, p.lng||p.longitude]);
             pathLayer.setLatLngs(latLngs);
             if (latLngs.length > 0) {
-                map.fitBounds(pathLayer.getBounds(), {padding:[20,20]});
-                if (syncMarker) map.removeLayer(syncMarker);
-                syncMarker = L.marker(latLngs[0], {
-                    icon: L.divIcon({ className: 'sync-marker', iconSize: [16,16], iconAnchor: [8,8] }),
-                    zIndexOffset:1000
-                }).addTo(map);
+                map.fitBounds(pathLayer.getBounds());
+                if(syncMarker) map.removeLayer(syncMarker);
+                syncMarker = L.marker(latLngs[0], {icon: runnerIcon, zIndexOffset:1000}).addTo(map);
             }
         }
 
-        // --- SYNC ENGINE ---
+        // --- MAIN LOOP ---
         player.ontimeupdate = () => {
             if (currentClipIndex === -1 || trackPoints.length < 2) return;
             
             const clip = videoClips[currentClipIndex];
-            const vidTime = player.currentTime;
+            const manualOffset = parseFloat(document.getElementById('syncOffset').value);
             
-            // CALCULATE GLOBAL RUN TIME
-            // GlobalTime = (Clip Start Time - Run Start Time) + Video Play Time
-            const globalTime = clip.offsetSeconds + vidTime;
+            // Current Run Time = Clip Offset + Video Time + Manual Tweak
+            const globalTime = clip.offsetSeconds + player.currentTime + manualOffset;
 
-            // 1. Broadcast
+            // Broadcast
             syncChannel.postMessage({ type: 'sync_time', time: globalTime });
 
-            // 2. Update Map
+            // Update Map
             updateMapPosition(globalTime);
             
-            // 3. Update HUD
-            document.getElementById('dispTime').innerText = formatRunTime(globalTime);
+            // Update Time Display
+            const m = Math.floor(globalTime/60);
+            const s = Math.floor(globalTime%60);
+            document.getElementById('dispTime').innerText = `${m}:${s.toString().padStart(2,'0')}`;
         };
 
-        // Auto-play next clip
+        // Auto Next
         player.onended = () => {
-            if (currentClipIndex < videoClips.length - 1) {
-                const gap = document.getElementById('gap-msg');
-                gap.style.display = 'block';
-                gap.innerText = "Loading next clip...";
-                
-                setTimeout(() => {
-                    gap.style.display = 'none';
-                    loadClip(currentClipIndex + 1);
-                }, 1000);
-            }
+            if (currentClipIndex < videoClips.length - 1) loadClip(currentClipIndex + 1);
         };
 
         function updateMapPosition(t) {
-            // Find correct segment
+            // Find index
             let idx = -1;
-            // Optimization: Start searching from last known index if we tracked it, 
-            // but for simplicity loop all (arrays are small enough)
             for(let i=0; i < trackPoints.length-1; i++) {
                 if (t >= trackPoints[i].time && t <= trackPoints[i+1].time) {
                     idx = i; break;
@@ -260,27 +235,37 @@
             if (idx !== -1) {
                 const p1 = trackPoints[idx];
                 const p2 = trackPoints[idx+1];
-                const factor = (t - p1.time) / (p2.time - p1.time);
-                
-                const lat = (p1.lat||p1.latitude) + ((p2.lat||p2.latitude) - (p1.lat||p1.latitude)) * factor;
-                const lng = (p1.lng||p1.longitude) + ((p2.lng||p2.longitude) - (p1.lng||p1.longitude)) * factor;
+                const f = (t - p1.time) / (p2.time - p1.time); // Interpolation factor
+
+                // 1. Position
+                const lat = (p1.lat||p1.latitude) + ((p2.lat||p2.latitude) - (p1.lat||p1.latitude)) * f;
+                const lng = (p1.lng||p1.longitude) + ((p2.lng||p2.longitude) - (p1.lng||p1.longitude)) * f;
                 
                 if(syncMarker) syncMarker.setLatLng([lat, lng]);
-                
-                // Auto-pan
                 if(!map.getBounds().contains([lat,lng])) map.panTo([lat,lng]);
 
-                // Update Vel
-                const v = (p1.vel||0) * 3.6; 
-                document.getElementById('dispVel').innerText = v.toFixed(1);
-            }
-        }
+                // 2. Data Interpolation
+                const v = (p1.vel + (p2.vel - p1.vel) * f) * 3.6; // km/h
+                const a = (p1.acc||0) + ((p2.acc||0) - (p1.acc||0)) * f; // m/s² (kept as is or *3.6 for km/h/s)
+                
+                // 3. Heading (Circular Interpolation)
+                let h1 = p1.heading || 0;
+                let h2 = p2.heading || 0;
+                // Fix 359 -> 1 wrap-around
+                if (h2 - h1 > 180) h2 -= 360;
+                if (h1 - h2 > 180) h1 -= 360;
+                let h = h1 + (h2 - h1) * f;
+                if (h < 0) h += 360;
 
-        function formatRunTime(sec) {
-            if (sec < 0) return "00:00";
-            const m = Math.floor(sec/60);
-            const s = Math.floor(sec%60);
-            return `${m}:${s.toString().padStart(2,'0')}`;
+                // 4. Update UI
+                document.getElementById('dispVel').innerText = v.toFixed(1);
+                document.getElementById('dispAcc').innerText = a.toFixed(2);
+                document.getElementById('dispHead').innerText = Math.round(h) + "°";
+
+                // Rotate Arrow
+                const arrow = document.getElementById('map-arrow');
+                if(arrow) arrow.style.transform = `rotate(${h}deg)`;
+            }
         }
     </script>
 </body>
