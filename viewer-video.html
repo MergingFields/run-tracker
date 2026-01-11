@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Video Satellite 5.0 (Pro Stats)</title>
+    <title>Video Satellite 6.0 (Sync Fix)</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
@@ -128,25 +128,27 @@
                 const data = JSON.parse(text);
                 trackPoints = data.track_points || data.points;
                 
-                // Try to find absolute start time
+                // Find start time
                 if (trackPoints[0].absTime) trackStartTime = trackPoints[0].absTime;
                 else if (data.date) trackStartTime = new Date(data.date).getTime();
-                else trackStartTime = 0; // Fallback
+                else trackStartTime = 0; 
 
                 processTrack();
             } catch(err) { alert("JSON Error: " + err.message); return; }
 
-            // Parse Video Filenames
+            // Parse Video Filenames (FIXED REGEX)
             videoClips = vidFiles.map(f => {
                 let dateObj = null;
-                // Regex for "Video_YYYY-MM-DD-HH-MM-SS" or similar
-                const match = f.name.match(/Video_(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})/);
+                
+                // FIX: Handles "Video_2026-01-11T19-13-44.webm" (with 'T' separator)
+                const match = f.name.match(/Video_(\d{4}-\d{2}-\d{2})[T_](\d{2})-(\d{2})-(\d{2})/);
                 
                 if (match) {
                     const isoStr = `${match[1]}T${match[2]}:${match[3]}:${match[4]}`;
                     dateObj = new Date(isoStr);
                 } else {
-                    // Fallback to file LastModified if name fails (risky but better than nothing)
+                    console.warn("Could not parse date from:", f.name);
+                    // Fallback to file LastModified
                     dateObj = new Date(f.lastModified);
                 }
 
@@ -154,7 +156,6 @@
                     file: f,
                     name: f.name,
                     startTimeMs: dateObj.getTime(),
-                    // Calculate relative offset from run start (in seconds)
                     offsetSeconds: (dateObj.getTime() - trackStartTime) / 1000
                 };
             });
@@ -202,29 +203,24 @@
             
             const clip = videoClips[currentClipIndex];
             const manualOffset = parseFloat(document.getElementById('syncOffset').value);
-            
-            // Current Run Time = Clip Offset + Video Time + Manual Tweak
             const globalTime = clip.offsetSeconds + player.currentTime + manualOffset;
 
             // Broadcast
             syncChannel.postMessage({ type: 'sync_time', time: globalTime });
 
-            // Update Map
+            // Update Map & HUD
             updateMapPosition(globalTime);
             
-            // Update Time Display
             const m = Math.floor(globalTime/60);
             const s = Math.floor(globalTime%60);
             document.getElementById('dispTime').innerText = `${m}:${s.toString().padStart(2,'0')}`;
         };
 
-        // Auto Next
         player.onended = () => {
             if (currentClipIndex < videoClips.length - 1) loadClip(currentClipIndex + 1);
         };
 
         function updateMapPosition(t) {
-            // Find index
             let idx = -1;
             for(let i=0; i < trackPoints.length-1; i++) {
                 if (t >= trackPoints[i].time && t <= trackPoints[i+1].time) {
@@ -235,34 +231,30 @@
             if (idx !== -1) {
                 const p1 = trackPoints[idx];
                 const p2 = trackPoints[idx+1];
-                const f = (t - p1.time) / (p2.time - p1.time); // Interpolation factor
+                const f = (t - p1.time) / (p2.time - p1.time); 
 
-                // 1. Position
                 const lat = (p1.lat||p1.latitude) + ((p2.lat||p2.latitude) - (p1.lat||p1.latitude)) * f;
                 const lng = (p1.lng||p1.longitude) + ((p2.lng||p2.longitude) - (p1.lng||p1.longitude)) * f;
                 
                 if(syncMarker) syncMarker.setLatLng([lat, lng]);
                 if(!map.getBounds().contains([lat,lng])) map.panTo([lat,lng]);
 
-                // 2. Data Interpolation
-                const v = (p1.vel + (p2.vel - p1.vel) * f) * 3.6; // km/h
-                const a = (p1.acc||0) + ((p2.acc||0) - (p1.acc||0)) * f; // m/s² (kept as is or *3.6 for km/h/s)
+                // DATA DISPLAY (Fixed Interop)
+                const v = (p1.vel + (p2.vel - p1.vel) * f) * 3.6; 
+                const a = (p1.acc||0) + ((p2.acc||0) - (p1.acc||0)) * f;
                 
-                // 3. Heading (Circular Interpolation)
+                // HEADING INTERPOLATION
                 let h1 = p1.heading || 0;
                 let h2 = p2.heading || 0;
-                // Fix 359 -> 1 wrap-around
                 if (h2 - h1 > 180) h2 -= 360;
                 if (h1 - h2 > 180) h1 -= 360;
                 let h = h1 + (h2 - h1) * f;
                 if (h < 0) h += 360;
 
-                // 4. Update UI
                 document.getElementById('dispVel').innerText = v.toFixed(1);
                 document.getElementById('dispAcc').innerText = a.toFixed(2);
                 document.getElementById('dispHead').innerText = Math.round(h) + "°";
 
-                // Rotate Arrow
                 const arrow = document.getElementById('map-arrow');
                 if(arrow) arrow.style.transform = `rotate(${h}deg)`;
             }
