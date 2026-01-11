@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Video Satellite 2.0</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; background: #111; color: #eee; }
+        
+        /* --- LAYOUT --- */
+        #main-container { display: flex; flex: 1; overflow: hidden; }
+        #video-section { flex: 2; background: #000; position: relative; display: flex; align-items: center; justify-content: center; border-right: 1px solid #333; }
+        #map-section { flex: 1; min-width: 300px; position: relative; }
+        
+        /* --- VIDEO PLAYER --- */
+        video { width: 100%; height: 100%; max-height: 100vh; object-fit: contain; }
+        
+        /* --- CONTROLS --- */
+        #controls { padding: 10px; background: #222; border-bottom: 1px solid #444; display: flex; gap: 15px; align-items: center; z-index: 1000; }
+        
+        .btn-upload {
+            background: #444; color: #fff; border: 1px solid #666; 
+            padding: 5px 12px; border-radius: 4px; cursor: pointer; font-size: 0.9em;
+        }
+        .btn-upload:hover { background: #666; }
+        
+        /* Hidden file input */
+        #fileInput { display: none; }
+
+        /* Stats HUD */
+        .hud { font-family: 'Consolas', monospace; display: flex; gap: 15px; margin-left: auto; }
+        .stat-item { display: flex; flex-direction: column; align-items: flex-end; }
+        .stat-val { font-size: 1.1em; font-weight: bold; color: #4facfe; }
+        .stat-lbl { font-size: 0.7em; color: #888; }
+        
+        /* LED Indicator */
+        .led { width: 10px; height: 10px; border-radius: 50%; background: #333; border: 1px solid #000; display:inline-block; margin-right:5px;}
+        .led.tx.on { background: #f00; box-shadow: 0 0 8px #f00; } 
+
+        #map { width: 100%; height: 100%; background: #222; }
+        
+        /* Sync Marker */
+        .sync-marker {
+            width: 16px; height: 16px;
+            background: #ff0055;
+            border: 2px solid white;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #ff0055;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="controls">
+        <div style="display:flex; align-items:center;">
+            <div id="led-tx" class="led tx" title="Broadcasting Sync"></div>
+            <span style="font-size:0.9em; color:#aaa;">Satellite Link</span>
+        </div>
+
+        <button class="btn-upload" onclick="document.getElementById('fileInput').click()">📂 Load JSON & Video</button>
+        <input type="file" id="fileInput" multiple accept=".json, .webm, .mp4, .mov">
+
+        <div class="hud">
+            <div class="stat-item">
+                <span class="stat-val" id="dispTime">00:00</span>
+                <span class="stat-lbl">TIME</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-val" id="dispVel">0.0</span>
+                <span class="stat-lbl">KM/H</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="main-container">
+        <div id="video-section">
+            <video id="main-player" controls playsinline>
+                <p style="color:#aaa;">Select files to begin</p>
+            </video>
+        </div>
+
+        <div id="map-section">
+            <div id="map"></div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // --- 1. SETUP ---
+        const map = L.map('map', { zoomControl: false }).setView([0, 0], 2);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+        
+        const pathLayer = L.polyline([], {color: '#4facfe', weight: 4, opacity: 0.8}).addTo(map);
+        let syncMarker = null;
+        let trackPoints = [];
+        let broadcastInterval = null;
+
+        // Broadcast Channel (Talks to your viewer.html)
+        const syncChannel = new BroadcastChannel('song_sync_channel');
+
+        // --- 2. FILE HANDLING ---
+        document.getElementById('fileInput').addEventListener('change', async (e) => {
+            const files = e.target.files;
+            let jsonFile = null;
+            let videoFile = null;
+
+            for (let f of files) {
+                if (f.name.toLowerCase().endsWith('.json')) jsonFile = f;
+                if (f.name.match(/\.(webm|mp4|mov)$/i)) videoFile = f;
+            }
+
+            if (!jsonFile || !videoFile) {
+                alert("Please select BOTH a .json track file AND a video file.");
+                return;
+            }
+
+            // Load Video
+            const videoURL = URL.createObjectURL(videoFile);
+            const player = document.getElementById('main-player');
+            player.src = videoURL;
+
+            // Load JSON
+            const text = await jsonFile.text();
+            try {
+                const data = JSON.parse(text);
+                processTrack(data);
+            } catch(err) { alert("JSON Error: " + err); }
+        });
+
+        function processTrack(data) {
+            trackPoints = data.track_points || data.points;
+            
+            // Draw Line
+            const latLngs = trackPoints.map(p => [p.lat || p.latitude, p.lng || p.longitude]);
+            pathLayer.setLatLngs(latLngs);
+            
+            if (latLngs.length > 0) {
+                map.fitBounds(pathLayer.getBounds(), {padding:[20,20]});
+                
+                // Init Marker
+                if (syncMarker) map.removeLayer(syncMarker);
+                const icon = L.divIcon({ className: 'sync-marker', iconSize: [20,20], iconAnchor: [10,10] });
+                syncMarker = L.marker(latLngs[0], {icon: icon, zIndexOffset:1000}).addTo(map);
+            }
+        }
+
+        // --- 3. SYNC ENGINE (Video -> Map & Broadcast) ---
+        const player = document.getElementById('main-player');
+
+        // Broadcasting Loop (Runs only when playing to save performance)
+        player.onplay = () => {
+            broadcastInterval = setInterval(() => {
+                broadcastTime(player.currentTime);
+            }, 200); // Send update 5 times a second
+        };
+
+        player.onpause = () => {
+            clearInterval(broadcastInterval);
+            broadcastTime(player.currentTime); // Send final pause time
+        };
+
+        player.onseeked = () => {
+            broadcastTime(player.currentTime);
+        };
+
+        player.ontimeupdate = () => {
+            const t = player.currentTime;
+            updateMap(t);
+            updateHUD(t);
+        };
+
+        function broadcastTime(time) {
+            const led = document.getElementById('led-tx');
+            led.classList.add('on'); setTimeout(() => led.classList.remove('on'), 100);
+
+            const msg = { type: 'sync_time', time: time };
+            
+            // 1. Send to BroadcastChannel (for separate tabs)
+            syncChannel.postMessage(msg);
+            
+            // 2. Send to Opener (if opened as a popup)
+            if (window.opener && !window.opener.closed) {
+                window.opener.postMessage(msg, '*');
+            }
+        }
+
+        function updateMap(t) {
+            if (trackPoints.length < 2) return;
+
+            // Find correct segment
+            // (Simple search; for long runs, binary search is better, but this is fine for now)
+            let idx = -1;
+            for(let i=0; i < trackPoints.length-1; i++) {
+                if (t >= trackPoints[i].time && t < trackPoints[i+1].time) {
+                    idx = i; break;
+                }
+            }
+
+            if (idx !== -1) {
+                const p1 = trackPoints[idx];
+                const p2 = trackPoints[idx+1];
+                const factor = (t - p1.time) / (p2.time - p1.time);
+                
+                const lat = (p1.lat||p1.latitude) + ((p2.lat||p2.latitude) - (p1.lat||p1.latitude)) * factor;
+                const lng = (p1.lng||p1.longitude) + ((p2.lng||p2.longitude) - (p1.lng||p1.longitude)) * factor;
+                
+                if(syncMarker) syncMarker.setLatLng([lat, lng]);
+                
+                // Auto-pan if marker leaves view
+                if(!map.getBounds().contains([lat,lng])) {
+                    map.panTo([lat,lng]);
+                }
+                
+                // Save current velocity for HUD
+                currentVel = (p1.vel + (p2.vel - p1.vel) * factor) * 3.6; // km/h
+            }
+        }
+
+        let currentVel = 0;
+        function updateHUD(t) {
+            const m = Math.floor(t/60);
+            const s = Math.floor(t%60);
+            document.getElementById('dispTime').innerText = `${m}:${s.toString().padStart(2,'0')}`;
+            document.getElementById('dispVel').innerText = currentVel.toFixed(1);
+        }
+
+    </script>
+</body>
+</html>
