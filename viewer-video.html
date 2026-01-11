@@ -2,18 +2,39 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Video Satellite 3.0 (Elastic Time)</title>
+    <title>Video Satellite 4.0 (Playlist Mode)</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         body { font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; background: #111; color: #eee; }
+        
+        /* --- LAYOUT --- */
         #main-container { display: flex; flex: 1; overflow: hidden; }
+        
+        /* PLAYLIST SIDEBAR */
+        #playlist-section {
+            width: 250px; background: #1a1a1a; border-right: 1px solid #333;
+            display: flex; flex-direction: column; overflow-y: auto;
+        }
+        .playlist-header { padding: 10px; background: #222; font-weight: bold; font-size: 0.9em; color: #aaa; border-bottom: 1px solid #444; }
+        .clip-item {
+            padding: 10px; border-bottom: 1px solid #2a2a2a; cursor: pointer; transition: background 0.2s;
+            font-size: 0.85em; color: #ccc;
+        }
+        .clip-item:hover { background: #333; }
+        .clip-item.active { background: #004466; color: #fff; border-left: 4px solid #4facfe; }
+        .clip-time { font-size: 0.8em; color: #888; margin-top: 2px; }
+
+        /* VIDEO STAGE */
         #video-section { flex: 2; background: #000; position: relative; display: flex; align-items: center; justify-content: center; border-right: 1px solid #333; }
-        #map-section { flex: 1; min-width: 300px; position: relative; }
         video { width: 100%; height: 100%; max-height: 100vh; object-fit: contain; }
-        
+
+        /* MAP */
+        #map-section { flex: 1; min-width: 300px; position: relative; }
+        #map { width: 100%; height: 100%; background: #222; }
+
+        /* CONTROLS */
         #controls { padding: 10px; background: #222; border-bottom: 1px solid #444; display: flex; gap: 15px; align-items: center; z-index: 1000; flex-wrap: wrap; }
-        
         .btn-upload { background: #444; color: #fff; border: 1px solid #666; padding: 5px 12px; border-radius: 4px; cursor: pointer; font-size: 0.9em; }
         .btn-upload:hover { background: #666; }
         #fileInput { display: none; }
@@ -23,62 +44,160 @@
         .stat-val { font-size: 1.1em; font-weight: bold; color: #4facfe; }
         .stat-lbl { font-size: 0.7em; color: #888; }
         
-        .toggle-label { font-size: 0.8em; color: #ccc; cursor: pointer; display: flex; align-items: center; gap: 5px; border: 1px solid #444; padding: 4px 8px; border-radius: 4px; background: #333; }
-        .toggle-label:hover { background: #444; }
-
-        #map { width: 100%; height: 100%; background: #222; }
+        /* SYNC MARKER */
         .sync-marker { width: 16px; height: 16px; background: #ff0055; border: 2px solid white; border-radius: 50%; box-shadow: 0 0 10px #ff0055; }
+        
+        /* GAP INDICATOR */
+        .time-gap-msg {
+            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+            background: rgba(255, 165, 0, 0.8); color: black; padding: 5px 15px;
+            border-radius: 20px; font-weight: bold; display: none; pointer-events: none;
+        }
     </style>
 </head>
 <body>
 
     <div id="controls">
-        <button class="btn-upload" onclick="document.getElementById('fileInput').click()">📂 Load Files</button>
+        <button class="btn-upload" onclick="document.getElementById('fileInput').click()">📂 Load Files (Select All)</button>
         <input type="file" id="fileInput" multiple accept=".json, .webm, .mp4, .mov">
 
-        <label class="toggle-label" title="Stretch the GPS path to fit the video duration">
-            <input type="checkbox" id="chkElastic"> Elastic Mode
-        </label>
-
         <div class="hud">
-            <div class="stat-item"><span class="stat-val" id="dispTime">00:00</span><span class="stat-lbl">TIME</span></div>
+            <div class="stat-item"><span class="stat-val" id="dispTime">00:00</span><span class="stat-lbl">GPS TIME</span></div>
             <div class="stat-item"><span class="stat-val" id="dispVel">0.0</span><span class="stat-lbl">KM/H</span></div>
-            <div class="stat-item"><span class="stat-val" id="dispAcc" style="color:#ff0055;">0.0</span><span class="stat-lbl">ACC</span></div>
         </div>
     </div>
 
     <div id="main-container">
-        <div id="video-section"><video id="main-player" controls playsinline></video></div>
-        <div id="map-section"><div id="map"></div></div>
+        <div id="playlist-section">
+            <div class="playlist-header">CLIPS FOUND</div>
+            <div id="playlist-content" style="padding:10px; color:#666;">No files loaded</div>
+        </div>
+
+        <div id="video-section">
+            <video id="main-player" controls playsinline></video>
+            <div id="gap-msg" class="time-gap-msg">Jumped forward in time</div>
+        </div>
+
+        <div id="map-section">
+            <div id="map"></div>
+        </div>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
+        // --- SETUP ---
         const map = L.map('map', { zoomControl: false }).setView([0, 0], 2);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
         const pathLayer = L.polyline([], {color: '#4facfe', weight: 4, opacity: 0.8}).addTo(map);
         let syncMarker = null;
         let trackPoints = [];
+        let trackStartTime = 0; // Epoch ms
+        
+        // Playlist State
+        let videoClips = []; // { file, startTimeMs, duration }
+        let currentClipIndex = -1;
+        
         const syncChannel = new BroadcastChannel('song_sync_channel');
+        const player = document.getElementById('main-player');
 
+        // --- FILE HANDLING ---
         document.getElementById('fileInput').addEventListener('change', async (e) => {
-            const files = e.target.files;
-            let jsonFile = null, videoFile = null;
-            for (let f of files) {
-                if (f.name.toLowerCase().endsWith('.json')) jsonFile = f;
-                if (f.name.match(/\.(webm|mp4|mov)$/i)) videoFile = f;
-            }
-            if (!jsonFile || !videoFile) { alert("Select BOTH .json and .webm/.mp4"); return; }
-            
-            document.getElementById('main-player').src = URL.createObjectURL(videoFile);
+            const files = Array.from(e.target.files);
+            let jsonFile = files.find(f => f.name.toLowerCase().endsWith('.json'));
+            let vidFiles = files.filter(f => f.name.match(/\.(webm|mp4|mov)$/i));
+
+            if (!jsonFile) { alert("Missing .json track file!"); return; }
+            if (vidFiles.length === 0) { alert("Missing video files!"); return; }
+
+            // 1. Load JSON
             const text = await jsonFile.text();
             try {
                 const data = JSON.parse(text);
                 trackPoints = data.track_points || data.points;
+                
+                // Determine Absolute Start Time of the Run
+                // Use the first point's absolute timestamp if available, else infer
+                if (trackPoints[0].absTime) {
+                    trackStartTime = trackPoints[0].absTime;
+                } else if (data.date) {
+                    trackStartTime = new Date(data.date).getTime();
+                } else {
+                    // Fallback: Assume filenames are absolute and we have no track ref? 
+                    // No, usually track points have relative time. 
+                    // Let's assume trackPoints[0].time is 0 relative to trackStartTime
+                    // This is tricky if no metadata.
+                    alert("Warning: JSON missing absolute timestamps. Sync might be off.");
+                    trackStartTime = Date.now(); 
+                }
+                
                 processTrack();
-            } catch(err) { alert("JSON Error"); }
+            } catch(err) { alert("JSON Error: " + err.message); return; }
+
+            // 2. Process Videos (Parse Filenames)
+            videoClips = vidFiles.map(f => {
+                // Filename: Video_2025-01-11T14-30-05.webm
+                // We need to extract the date string
+                let dateObj = null;
+                
+                // Try standard ISO regex first
+                const match = f.name.match(/Video_(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})/);
+                if (match) {
+                    // Reconstruct to YYYY-MM-DDTHH:MM:SS (standard ISO)
+                    const isoStr = `${match[1]}T${match[2]}:${match[3]}:${match[4]}`;
+                    dateObj = new Date(isoStr);
+                } else {
+                    // Fallback: Just assume it plays at start if name is weird
+                    dateObj = new Date(trackStartTime); 
+                }
+
+                return {
+                    file: f,
+                    name: f.name,
+                    startTimeMs: dateObj.getTime(),
+                    offsetSeconds: (dateObj.getTime() - trackStartTime) / 1000
+                };
+            });
+
+            // Sort clips by time
+            videoClips.sort((a, b) => a.startTimeMs - b.startTimeMs);
+            
+            buildPlaylistUI();
+            loadClip(0);
         });
 
+        function buildPlaylistUI() {
+            const container = document.getElementById('playlist-content');
+            container.innerHTML = '';
+            
+            videoClips.forEach((clip, index) => {
+                const div = document.createElement('div');
+                div.className = 'clip-item';
+                div.innerHTML = `
+                    <div>${clip.name}</div>
+                    <div class="clip-time">Starts at ${formatRunTime(clip.offsetSeconds)}</div>
+                `;
+                div.onclick = () => loadClip(index);
+                div.id = `clip-${index}`;
+                container.appendChild(div);
+            });
+        }
+
+        function loadClip(index) {
+            if (index < 0 || index >= videoClips.length) return;
+            
+            currentClipIndex = index;
+            const clip = videoClips[index];
+            
+            // Highlight UI
+            document.querySelectorAll('.clip-item').forEach(d => d.classList.remove('active'));
+            document.getElementById(`clip-${index}`).classList.add('active');
+
+            // Load Video
+            player.src = URL.createObjectURL(clip.file);
+            player.play();
+        }
+
+        // --- MAP LOGIC ---
         function processTrack() {
             const latLngs = trackPoints.map(p => [p.lat||p.latitude, p.lng||p.longitude]);
             pathLayer.setLatLngs(latLngs);
@@ -86,92 +205,82 @@
                 map.fitBounds(pathLayer.getBounds(), {padding:[20,20]});
                 if (syncMarker) map.removeLayer(syncMarker);
                 syncMarker = L.marker(latLngs[0], {
-                    icon: L.divIcon({ className: 'sync-marker', iconSize: [20,20], iconAnchor: [10,10] }),
+                    icon: L.divIcon({ className: 'sync-marker', iconSize: [16,16], iconAnchor: [8,8] }),
                     zIndexOffset:1000
                 }).addTo(map);
             }
         }
 
-        const player = document.getElementById('main-player');
-        
+        // --- SYNC ENGINE ---
         player.ontimeupdate = () => {
-            const t = player.currentTime;
-            const duration = player.duration || 1; // Prevent div/0
+            if (currentClipIndex === -1 || trackPoints.length < 2) return;
             
-            // 1. BROADCAST
-            syncChannel.postMessage({ type: 'sync_time', time: t });
-
-            // 2. UPDATE MAP
-            if (trackPoints.length < 2) return;
+            const clip = videoClips[currentClipIndex];
+            const vidTime = player.currentTime;
             
-            const isElastic = document.getElementById('chkElastic').checked;
-            let targetGPS = null;
+            // CALCULATE GLOBAL RUN TIME
+            // GlobalTime = (Clip Start Time - Run Start Time) + Video Play Time
+            const globalTime = clip.offsetSeconds + vidTime;
 
-            if (isElastic) {
-                // Mode A: ELASTIC (Stretch Path to Video)
-                // Percent of video played
-                const pct = t / duration; 
-                
-                // Map to Total GPS Duration
-                const startT = trackPoints[0].time;
-                const endT = trackPoints[trackPoints.length-1].time;
-                const totalT = endT - startT;
-                
-                // Target GPS Time
-                const seekT = startT + (totalT * pct);
-                targetGPS = getPointAtTime(seekT);
-                
-            } else {
-                // Mode B: REAL TIME (Absolute Sync)
-                // Assumes video starts at t=0 of the run. 
-                // (Ideally, we would use the "REC" marker timestamp, but that requires parsing separate marker data)
-                targetGPS = getPointAtTime(t);
-            }
+            // 1. Broadcast
+            syncChannel.postMessage({ type: 'sync_time', time: globalTime });
 
-            if (targetGPS) {
-                if(syncMarker) syncMarker.setLatLng([targetGPS.lat, targetGPS.lng]);
-                
-                // Auto-pan
-                if(!map.getBounds().contains([targetGPS.lat, targetGPS.lng])) map.panTo([targetGPS.lat, targetGPS.lng]);
-
-                // Update HUD
-                const v = (targetGPS.vel||0) * 3.6; // km/h
-                const a = (targetGPS.acc||0) * 3.6; // km/h/s (roughly)
-                document.getElementById('dispVel').innerText = v.toFixed(1);
-                document.getElementById('dispAcc').innerText = a.toFixed(1);
-            }
+            // 2. Update Map
+            updateMapPosition(globalTime);
             
-            const m = Math.floor(t/60);
-            const s = Math.floor(t%60);
-            document.getElementById('dispTime').innerText = `${m}:${s.toString().padStart(2,'0')}`;
+            // 3. Update HUD
+            document.getElementById('dispTime').innerText = formatRunTime(globalTime);
         };
 
-        function getPointAtTime(t) {
-            // Find segment
+        // Auto-play next clip
+        player.onended = () => {
+            if (currentClipIndex < videoClips.length - 1) {
+                const gap = document.getElementById('gap-msg');
+                gap.style.display = 'block';
+                gap.innerText = "Loading next clip...";
+                
+                setTimeout(() => {
+                    gap.style.display = 'none';
+                    loadClip(currentClipIndex + 1);
+                }, 1000);
+            }
+        };
+
+        function updateMapPosition(t) {
+            // Find correct segment
             let idx = -1;
+            // Optimization: Start searching from last known index if we tracked it, 
+            // but for simplicity loop all (arrays are small enough)
             for(let i=0; i < trackPoints.length-1; i++) {
                 if (t >= trackPoints[i].time && t <= trackPoints[i+1].time) {
                     idx = i; break;
                 }
             }
-            
-            if (idx === -1) {
-                // Handle edges
-                if (t < trackPoints[0].time) return trackPoints[0];
-                if (t > trackPoints[trackPoints.length-1].time) return trackPoints[trackPoints.length-1];
-                return null;
-            }
 
-            const p1 = trackPoints[idx];
-            const p2 = trackPoints[idx+1];
-            const factor = (t - p1.time) / (p2.time - p1.time);
-            
-            return {
-                lat: (p1.lat||p1.latitude) + ((p2.lat||p2.latitude) - (p1.lat||p1.latitude)) * factor,
-                lng: (p1.lng||p1.longitude) + ((p2.lng||p2.longitude) - (p1.lng||p1.longitude)) * factor,
-                vel: (p1.vel||0) + ((p2.vel||0) - (p1.vel||0)) * factor,
-                acc: (p1.acc||0) + ((p2.acc||0) - (p1.acc||0)) * factor
-            };
+            if (idx !== -1) {
+                const p1 = trackPoints[idx];
+                const p2 = trackPoints[idx+1];
+                const factor = (t - p1.time) / (p2.time - p1.time);
+                
+                const lat = (p1.lat||p1.latitude) + ((p2.lat||p2.latitude) - (p1.lat||p1.latitude)) * factor;
+                const lng = (p1.lng||p1.longitude) + ((p2.lng||p2.longitude) - (p1.lng||p1.longitude)) * factor;
+                
+                if(syncMarker) syncMarker.setLatLng([lat, lng]);
+                
+                // Auto-pan
+                if(!map.getBounds().contains([lat,lng])) map.panTo([lat,lng]);
+
+                // Update Vel
+                const v = (p1.vel||0) * 3.6; 
+                document.getElementById('dispVel').innerText = v.toFixed(1);
+            }
+        }
+
+        function formatRunTime(sec) {
+            if (sec < 0) return "00:00";
+            const m = Math.floor(sec/60);
+            const s = Math.floor(sec%60);
+            return `${m}:${s.toString().padStart(2,'0')}`;
         }
     </script>
 </body>
