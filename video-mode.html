@@ -29,7 +29,6 @@
         }
         #live-video { width: 100%; height: 100%; object-fit: cover; }
         
-        /* Recording Indicator */
         #rec-indicator {
             position: absolute; top: 10px; right: 10px;
             width: 15px; height: 15px; background: red; border-radius: 50%;
@@ -37,12 +36,23 @@
         }
         @keyframes blink { 50% { opacity: 0; } }
 
-        /* Controls */
         .cam-settings { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 10px; }
         .cam-actions { display: grid; grid-template-columns: 1fr; gap: 10px; margin-bottom: 10px; }
         
         .btn-rec { background: #cc0000; color: white; }
         .btn-stop-rec { background: #333; color: white; display: none; }
+        
+        /* Video Marker Style on Map */
+        .video-marker {
+            background-color: #cc0000;
+            border: 2px solid white;
+            border-radius: 50%;
+            text-align: center;
+            color: white;
+            font-weight: bold;
+            line-height: 20px;
+            font-size: 10px;
+        }
     </style>
 </head>
 <body>
@@ -86,14 +96,14 @@
         </div>
         
         <div class="button-grid" id="save-options" style="display:none;">
-            <button class="btn-dark" onclick="downloadRun(true)">Save GPS & Video</button>
+            <button class="btn-dark" onclick="downloadRun(true)">Save GPS Track</button>
         </div>
 
         <button id="btn-reset" class="btn-danger" onclick="saveAndReset()" style="display:none;">End & Reset</button>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="tracker.js?v=6"></script>
+    <script src="tracker.js?v=7"></script>
 
     <script>
         const video = document.getElementById('live-video');
@@ -113,7 +123,6 @@
         async function startCamera() {
             if (stream) stopCamera(); 
             try {
-                // Request Audio for video mode!
                 stream = await navigator.mediaDevices.getUserMedia({ 
                     video: { facingMode: currentFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
                     audio: true 
@@ -138,26 +147,53 @@
             await startCamera(); 
         }
 
+        // --- NEW: Helper to drop markers on the map ---
+        async function addVideoMarker(label) {
+            if (!lastPos) return; // Wait for GPS
+            
+            const heading = await getHeadingNow();
+            const lat = lastPos.latitude;
+            const lng = lastPos.longitude;
+            
+            // Visual Marker (Red Dot)
+            const vidIcon = L.divIcon({
+                html: label,
+                className: 'video-marker',
+                iconSize: [20, 20],
+                iconAnchor: [10, 10]
+            });
+
+            L.marker([lat, lng], {icon: vidIcon})
+                .addTo(map)
+                .bindPopup(`<b>${label}</b><br>Time: ${new Date().toLocaleTimeString()}<br>Heading: ${Math.round(heading)}°`);
+                
+            // (Optional) You could push this to a list to save in JSON later
+        }
+
+        // --- NEW: Helper for Filename ---
+        function getTimestampFilename() {
+            const now = new Date();
+            // Output example: Video_2025-01-11_14-30-05.webm
+            return "Video_" + now.toISOString().replace(/[:.]/g, '-').slice(0, 19) + ".webm";
+        }
+
         // --- VIDEO RECORDING LOGIC ---
         function toggleRecording(isRecording) {
             const btnRec = document.getElementById('btn-record');
             const btnStop = document.getElementById('btn-stop-rec');
 
             if (isRecording) {
-                // START RECORDING
+                // START
                 if (!stream) { alert("Start Run first!"); return; }
                 
                 recordedChunks = [];
-                // Use a standard web format
                 const options = { mimeType: 'video/webm;codecs=vp9' };
-                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-                     options.mimeType = 'video/webm'; // Fallback
-                }
+                if (!MediaRecorder.isTypeSupported(options.mimeType)) options.mimeType = 'video/webm'; 
                 
                 try {
                     mediaRecorder = new MediaRecorder(stream, options);
                 } catch (e) {
-                    alert("MediaRecorder not supported on this device.");
+                    alert("MediaRecorder error.");
                     return;
                 }
 
@@ -167,23 +203,26 @@
 
                 mediaRecorder.start();
                 
-                // UI Updates
+                // Add Visual Marker for START
+                addVideoMarker("REC"); 
+                
                 btnRec.style.display = 'none';
                 btnStop.style.display = 'block';
                 recInd.style.display = 'block';
                 camContainer.style.border = "3px solid red";
 
             } else {
-                // STOP RECORDING
+                // STOP
                 if (mediaRecorder) mediaRecorder.stop();
                 
-                // UI Updates
+                // Add Visual Marker for STOP
+                addVideoMarker("END");
+
                 btnRec.style.display = 'block';
                 btnStop.style.display = 'none';
                 recInd.style.display = 'none';
                 camContainer.style.border = "2px solid #fff";
                 
-                // Simple save for now (we will improve this later)
                 setTimeout(downloadVideo, 500); 
             }
         }
@@ -193,12 +232,14 @@
             const blob = new Blob(recordedChunks, { type: "video/webm" });
             const url = URL.createObjectURL(blob);
             const a = document.createElement("a");
+            
             a.href = url;
-            a.download = "MyRunVideo.webm";
+            // USE THE NEW TIMESTAMP FUNCTION
+            a.download = getTimestampFilename(); 
+            
             document.body.appendChild(a);
             a.click();
             URL.revokeObjectURL(url);
-            alert("Video downloaded!");
         }
     </script>
 </body>
