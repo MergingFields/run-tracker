@@ -66,6 +66,7 @@
     <div id="cam-container">
         <video id="live-video" autoplay playsinline muted></video>
         <div id="rec-indicator"></div>
+        <button onclick="startCamera()" style="position:absolute; bottom:10px; left:10px; font-size:10px; background:rgba(0,0,0,0.5); color:white; border:1px solid white;">Wake Cam</button>
     </div>
 
     <div id="controls">
@@ -103,9 +104,71 @@
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="tracker.js?v=7"></script>
+    <script src="tracker.js?v=8"></script>
 
     <script>
+        // --- OVERRIDE TRACKER.JS updatePosition to add ACCELERATION & HEADING ---
+        // This replaces the function loaded from tracker.js
+        const originalUpdatePosition = updatePosition;
+        
+        updatePosition = function(position) {
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+            const timestamp = position.timestamp;
+            
+            // Calculate Velocity
+            let v_current = position.coords.speed || 0;
+            
+            // Calculate Acceleration: (dv / dt)
+            let acc = 0;
+            if (lastPos && lastPos.timestamp) {
+                const dt = (timestamp - lastPos.timestamp) / 1000; // seconds
+                if (dt > 0) {
+                    acc = (v_current - lastPos.speed) / dt;
+                }
+            }
+
+            // Get Heading (Compass or GPS Course)
+            let h = currentHeading || position.coords.heading || 0;
+
+            // Map Updates
+            if (!lastPos) map.setView([lat, lng], 18);
+            if (lastPos) {
+                const distStep = map.distance([lastPos.latitude, lastPos.longitude], [lat, lng]);
+                totalDistance += distStep;
+            }
+
+            // UI
+            document.getElementById('vel').innerText = v_current.toFixed(1);
+            document.getElementById('dist').innerText = Math.round(totalDistance);
+            
+            // Draw Line
+            pathLayer.addLatLng([lat, lng]);
+            
+            // Save Data with EXTRA FIELDS
+            const point = {
+                time: (Date.now() - startTime) / 1000,
+                absTime: timestamp,
+                lat: lat,
+                lng: lng,
+                vel: v_current,
+                acc: acc,        // NEW: Acceleration
+                heading: h       // NEW: Heading
+            };
+
+            trackData.push(point);
+
+            lastPos = { 
+                latitude: lat, 
+                longitude: lng, 
+                speed: v_current,
+                timestamp: timestamp 
+            };
+            
+            saveToMemory();
+        };
+
+        // --- CAMERA LOGIC ---
         const video = document.getElementById('live-video');
         const camContainer = document.getElementById('cam-container');
         const overlay = document.getElementById('pocket-overlay');
@@ -121,7 +184,11 @@
         }
 
         async function startCamera() {
+            // Only start if not already active to prevent flickering
+            if (stream && stream.active) return;
+            
             if (stream) stopCamera(); 
+
             try {
                 stream = await navigator.mediaDevices.getUserMedia({ 
                     video: { facingMode: currentFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
@@ -129,6 +196,7 @@
                 });
                 video.srcObject = stream;
                 camContainer.style.display = 'block'; 
+                video.play(); // Ensure it plays after interruption
             } catch (err) {
                 console.warn("Camera Error:", err);
             }
@@ -142,20 +210,31 @@
             }
         }
 
+        // AUTO-WAKE: Restart camera if user returns to tab (e.g. after upload)
+        document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === "visible" && tracking) {
+                console.log("Tab visible again, waking camera...");
+                startCamera();
+            }
+        });
+
         async function switchCamera() {
             currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
+            // Force stop and restart
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
             await startCamera(); 
         }
 
-        // --- NEW: Helper to drop markers on the map ---
+        // --- MARKERS & FILENAMES ---
         async function addVideoMarker(label) {
-            if (!lastPos) return; // Wait for GPS
-            
+            if (!lastPos) return; 
             const heading = await getHeadingNow();
             const lat = lastPos.latitude;
             const lng = lastPos.longitude;
             
-            // Visual Marker (Red Dot)
             const vidIcon = L.divIcon({
                 html: label,
                 className: 'video-marker',
@@ -166,25 +245,20 @@
             L.marker([lat, lng], {icon: vidIcon})
                 .addTo(map)
                 .bindPopup(`<b>${label}</b><br>Time: ${new Date().toLocaleTimeString()}<br>Heading: ${Math.round(heading)}°`);
-                
-            // (Optional) You could push this to a list to save in JSON later
         }
 
-        // --- NEW: Helper for Filename ---
         function getTimestampFilename() {
             const now = new Date();
-            // Output example: Video_2025-01-11_14-30-05.webm
             return "Video_" + now.toISOString().replace(/[:.]/g, '-').slice(0, 19) + ".webm";
         }
 
-        // --- VIDEO RECORDING LOGIC ---
+        // --- RECORDING ---
         function toggleRecording(isRecording) {
             const btnRec = document.getElementById('btn-record');
             const btnStop = document.getElementById('btn-stop-rec');
 
             if (isRecording) {
-                // START
-                if (!stream) { alert("Start Run first!"); return; }
+                if (!stream) { startCamera().then(() => toggleRecording(true)); return; }
                 
                 recordedChunks = [];
                 const options = { mimeType: 'video/webm;codecs=vp9' };
@@ -193,7 +267,7 @@
                 try {
                     mediaRecorder = new MediaRecorder(stream, options);
                 } catch (e) {
-                    alert("MediaRecorder error.");
+                    alert("MediaRecorder error: " + e.message);
                     return;
                 }
 
@@ -202,8 +276,6 @@
                 };
 
                 mediaRecorder.start();
-                
-                // Add Visual Marker for START
                 addVideoMarker("REC"); 
                 
                 btnRec.style.display = 'none';
@@ -212,10 +284,7 @@
                 camContainer.style.border = "3px solid red";
 
             } else {
-                // STOP
                 if (mediaRecorder) mediaRecorder.stop();
-                
-                // Add Visual Marker for STOP
                 addVideoMarker("END");
 
                 btnRec.style.display = 'block';
@@ -223,6 +292,7 @@
                 recInd.style.display = 'none';
                 camContainer.style.border = "2px solid #fff";
                 
+                // Wait briefly for final data, then download
                 setTimeout(downloadVideo, 500); 
             }
         }
@@ -232,11 +302,8 @@
             const blob = new Blob(recordedChunks, { type: "video/webm" });
             const url = URL.createObjectURL(blob);
             const a = document.createElement("a");
-            
             a.href = url;
-            // USE THE NEW TIMESTAMP FUNCTION
             a.download = getTimestampFilename(); 
-            
             document.body.appendChild(a);
             a.click();
             URL.revokeObjectURL(url);
