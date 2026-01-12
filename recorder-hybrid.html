@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Run Recorder V3</title>
+    <title>Run Recorder V4</title>
     <style>
         /* APP LAYOUT */
         body { margin: 0; background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -54,9 +54,17 @@
             border: none; border-radius: 50px; cursor: pointer; margin-top: 20px; width: 80%;
         }
         .btn-blue { background: #4fceff; color: #000; }
-        .btn-green { background: #00e676; color: #003b1f; display: none; } /* Hidden initially */
+        .btn-green { background: #00e676; color: #003b1f; display: none; }
         .btn-finish { background: #ff4444; color: white; }
         .btn-resume { background: #444; color: white; margin-top: 20px; font-size: 16px; padding: 15px 30px; }
+
+        /* SAVING SPINNER */
+        #saving-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9); z-index: 2000;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            color: #4fceff; font-family: monospace; font-size: 18px;
+        }
 
         @keyframes blink { 50% { opacity: 0; } }
         @keyframes flash { 0% { opacity: 1; } 100% { opacity: 0; } }
@@ -65,13 +73,16 @@
 </head>
 <body>
 
+    <div id="saving-overlay" class="hidden">
+        <div style="font-size: 40px; margin-bottom: 20px;">💾</div>
+        <div>SAVING TO PHONE...</div>
+        <div style="font-size: 12px; color: #aaa; margin-top: 10px;">Do not close tab</div>
+    </div>
+
     <div id="screen-start" class="modal">
         <h1 style="margin-bottom: 10px;">🏃 RUN TRACKER</h1>
-        
         <button id="btn-perm" class="big-btn btn-blue">1. ENABLE SENSORS</button>
-        
         <button id="btn-go" class="big-btn btn-green">2. START RUN</button>
-        
         <div id="perm-msg" style="margin-top:20px; font-size:12px; color:#aaa;">Requires iOS Permissions</div>
     </div>
 
@@ -111,23 +122,35 @@
         let timerInterval;
         let geoWatchId;
 
-        // --- STEP 1: SENSOR PERMISSION (iOS Strict) ---
+        // --- 0. INIT DATABASE ON LOAD (Safe) ---
+        // We ensure the DB exists immediately, so we don't struggle at the end.
+        function initDB() {
+            const req = indexedDB.open("RunTrackerDB", 99);
+            req.onupgradeneeded = e => {
+                const db = e.target.result;
+                if(db.objectStoreNames.contains("sessions")) db.deleteObjectStore("sessions");
+                db.createObjectStore("sessions", { keyPath: "id", autoIncrement: true });
+            };
+            req.onsuccess = () => console.log("DB Ready");
+            req.onerror = e => console.error("DB Init Error", e);
+        }
+        initDB();
+
+        // --- 1. SENSOR PERMISSION ---
         document.getElementById('btn-perm').addEventListener('click', function() {
             if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                // This MUST be the very first line after click
                 DeviceOrientationEvent.requestPermission()
                     .then(response => {
                         if (response === 'granted') {
                             window.addEventListener('deviceorientation', handleOrientation);
                             showStepTwo();
                         } else {
-                            alert("Sensors Denied. Run will not have Heading.");
+                            alert("Sensors Denied.");
                             showStepTwo();
                         }
                     })
                     .catch(e => alert(e));
             } else {
-                // Android / Desktop (No permission needed)
                 window.addEventListener('deviceorientation', handleOrientation);
                 showStepTwo();
             }
@@ -138,15 +161,11 @@
             document.getElementById('btn-go').style.display = 'block';
         }
 
-        // --- STEP 2: CAMERA & START ---
+        // --- 2. START RUN ---
         document.getElementById('btn-go').addEventListener('click', async function() {
             try {
-                videoStream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "environment" }, 
-                    audio: true 
-                });
+                videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: true });
                 document.getElementById('camera-feed').srcObject = videoStream;
-
                 startGPS();
                 document.getElementById('screen-start').classList.add('hidden');
                 state.isRunning = true;
@@ -217,7 +236,7 @@
             flash.style.animation = 'none';
             flash.offsetHeight; 
             flash.style.animation = 'flash 0.3s ease-out';
-
+            
             const video = document.getElementById('camera-feed');
             const canvas = document.createElement('canvas');
             canvas.width = video.videoWidth;
@@ -229,7 +248,6 @@
                 lat = state.trackPoints[state.trackPoints.length-1].lat;
                 lng = state.trackPoints[state.trackPoints.length-1].lng;
             }
-
             state.photos.push({
                 time: state.elapsedTime,
                 lat: lat, lng: lng, heading: state.currentHeading,
@@ -241,39 +259,29 @@
             const btn = document.getElementById('btn-rec');
             const dot = document.getElementById('rec-dot');
             const txt = document.getElementById('rec-text');
-
             if(!state.isRecordingVideo) {
                 state.videoChunks = []; 
                 try {
                     const mime = MediaRecorder.isTypeSupported("video/mp4") ? "video/mp4" : "video/webm";
                     mediaRecorder = new MediaRecorder(videoStream, { mimeType: mime });
-                    mediaRecorder.ondataavailable = e => {
-                        if(e.data.size > 0) state.videoChunks.push(e.data);
-                    };
+                    mediaRecorder.ondataavailable = e => { if(e.data.size > 0) state.videoChunks.push(e.data); };
                     mediaRecorder.start();
                     state.isRecordingVideo = true;
-                    btn.classList.add('recording');
-                    btn.innerText = "STOP";
-                    dot.style.display = 'inline-block';
-                    txt.innerText = "REC";
-                    txt.style.color = "red";
+                    btn.classList.add('recording'); btn.innerText = "STOP"; dot.style.display = 'inline-block'; txt.innerText = "REC"; txt.style.color = "red";
                 } catch(e) { alert("Video Error: " + e); }
             } else {
                 mediaRecorder.stop();
                 state.isRecordingVideo = false;
-                btn.classList.remove('recording');
-                btn.innerText = "REC";
-                dot.style.display = 'none';
-                txt.innerText = "STBY";
-                txt.style.color = "#aaa";
+                btn.classList.remove('recording'); btn.innerText = "REC"; dot.style.display = 'none'; txt.innerText = "STBY"; txt.style.color = "#aaa";
             }
         }
 
+        // --- 3. FINISH & SAVE (The Critical Fix) ---
         function finishRun() {
-            if(state.trackPoints.length === 0 && state.photos.length === 0) {
-                alert("No data recorded yet!");
-                return;
-            }
+            // A. Show Loading Screen IMMEDIATELY
+            document.getElementById('saving-overlay').classList.remove('hidden');
+
+            // B. Compile Data
             let finalVideoBlob = null;
             if(state.videoChunks.length > 0) {
                 const mime = MediaRecorder.isTypeSupported("video/mp4") ? "video/mp4" : "video/webm";
@@ -287,32 +295,31 @@
                 photos: state.photos,
                 videoBlob: finalVideoBlob
             };
-            
-            // --- NUCLEAR OPTION: VERSION 99 ---
-            // This forces the browser to run 'onupgradeneeded' no matter what version you had before.
+
+            // C. Open DB (Standard Open, NO Version upgrade needed)
             const req = indexedDB.open("RunTrackerDB", 99);
-            
-            req.onupgradeneeded = e => {
-                const db = e.target.result;
-                // Delete the old broken store if it exists
-                if(db.objectStoreNames.contains("sessions")) {
-                    db.deleteObjectStore("sessions");
-                }
-                // Create a fresh one
-                db.createObjectStore("sessions", { keyPath: "id", autoIncrement: true });
-            };
             
             req.onsuccess = e => {
                 const db = e.target.result;
                 const tx = db.transaction("sessions", "readwrite");
-                tx.objectStore("sessions").add(session);
-                tx.oncomplete = () => {
-                    alert("✅ SAVED! (DB Reset Successful)");
-                    window.location.href = "index.html"; 
+                
+                const addReq = tx.objectStore("sessions").add(session);
+                
+                addReq.onsuccess = () => {
+                    // D. SUCCESS: Redirect to Manager
+                    window.location.href = "session-manager.html"; 
                 };
-                tx.onerror = (err) => alert("Save Error: " + err.target.error);
+                
+                addReq.onerror = (err) => {
+                    document.getElementById('saving-overlay').classList.add('hidden');
+                    alert("SAVE FAILED: " + err.target.error);
+                };
             };
-            req.onerror = e => alert("DB Open Error: " + e.target.error);
+            
+            req.onerror = (err) => {
+                document.getElementById('saving-overlay').classList.add('hidden');
+                alert("DB ERROR: " + err.target.error);
+            };
         }
     </script>
 </body>
