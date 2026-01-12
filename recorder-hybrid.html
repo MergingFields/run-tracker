@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Hybrid Recorder (DB)</title>
+    <style>
+        body { margin: 0; background: #000; color: #fff; font-family: sans-serif; overflow: hidden; display: flex; flex-direction: column; height: 100vh; }
+        
+        /* PREVIEW AREA */
+        #preview-container { flex: 1; position: relative; background: #111; }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        
+        /* OVERLAYS */
+        #stats-overlay { position: absolute; top: 10px; left: 10px; font-size: 12px; text-shadow: 1px 1px 2px black; pointer-events: none; }
+        #rec-indicator { position: absolute; top: 10px; right: 10px; color: red; font-weight: bold; display: none; animation: blink 1s infinite; }
+        @keyframes blink { 50% { opacity: 0; } }
+
+        /* CONTROLS (Bottom Bar) */
+        #controls { height: 120px; background: rgba(0,0,0,0.5); display: flex; justify-content: space-around; align-items: center; padding: 0 20px; }
+        
+        .btn { width: 70px; height: 70px; border-radius: 50%; border: none; font-weight: bold; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 10px; }
+        
+        #btn-photo { background: white; color: black; border: 4px solid #ccc; }
+        #btn-photo:active { background: #ccc; }
+        
+        #btn-video { background: red; color: white; border: 4px solid #fff; }
+        #btn-video.recording { background: white; border-color: red; color: red; }
+
+        #btn-save { background: #4fceff; color: black; width: 60px; height: 60px; display: none; }
+        
+        /* IOS PERMISSION MODAL */
+        #ios-modal { position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:9999; display:flex; justify-content:center; align-items:center; flex-direction:column; }
+        #ios-modal button { padding: 20px; font-size: 18px; background: #0f0; border: none; border-radius: 10px; }
+    </style>
+</head>
+<body>
+
+    <div id="ios-modal">
+        <h2 style="color:white; margin-bottom:20px;">Enable Sensors</h2>
+        <button onclick="requestPermissions()">START SESSION</button>
+    </div>
+
+    <div id="preview-container">
+        <video id="camera-feed" autoplay playsinline muted></video>
+        <div id="stats-overlay">
+            HDG: <span id="val-hdg">0</span>°<br>
+            ACC: <span id="val-acc">0</span><br>
+            GPS: <span id="val-gps">Waiting...</span>
+        </div>
+        <div id="rec-indicator">REC</div>
+    </div>
+
+    <div id="controls">
+        <button id="btn-photo" class="btn" onclick="takePhoto()">SNAP</button>
+        <button id="btn-video" class="btn" onclick="toggleVideo()">REC</button>
+        <button id="btn-save" class="btn" onclick="saveSession()">SAVE DB</button>
+    </div>
+
+    <script>
+        // --- STATE ---
+        let stream = null;
+        let mediaRecorder = null;
+        let chunks = [];
+        let sessionData = {
+            startTime: Date.now(),
+            track_points: [], // GPS + Motion stream
+            photos: [],       // Snapshots
+            videoBlob: null   // The recorded video file
+        };
+        let isRecording = false;
+        let watchID = null;
+
+        // Current Sensor Values
+        let currentHeading = 0;
+        let currentAcc = 0;
+        let currentLat = 0;
+        let currentLng = 0;
+
+        // --- 1. INITIALIZATION & SENSORS ---
+        async function requestPermissions() {
+            document.getElementById('ios-modal').style.display = 'none';
+            
+            // Camera
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment" }, 
+                    audio: true 
+                });
+                document.getElementById('camera-feed').srcObject = stream;
+            } catch(e) { alert("Camera Error: " + e); }
+
+            // GPS
+            if(navigator.geolocation) {
+                watchID = navigator.geolocation.watchPosition(pos => {
+                    currentLat = pos.coords.latitude;
+                    currentLng = pos.coords.longitude;
+                    document.getElementById('val-gps').innerText = `${currentLat.toFixed(4)}, ${currentLng.toFixed(4)}`;
+                }, err => console.error(err), { enableHighAccuracy: true });
+            }
+
+            // iOS 13+ Motion Permissions
+            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                DeviceOrientationEvent.requestPermission()
+                    .then(response => {
+                        if (response == 'granted') window.addEventListener('deviceorientation', handleOrientation);
+                    })
+                    .catch(console.error);
+            } else {
+                window.addEventListener('deviceorientation', handleOrientation);
+            }
+            window.addEventListener('devicemotion', handleMotion);
+            
+            // Start the Data Loop (1Hz logging)
+            setInterval(logDataPoint, 1000); 
+        }
+
+        function handleOrientation(e) {
+            // iOS webkitCompassHeading is the true magnetic north
+            if(e.webkitCompassHeading) {
+                currentHeading = e.webkitCompassHeading;
+            } else if (e.alpha) {
+                currentHeading = 360 - e.alpha; // Android fallback
+            }
+            document.getElementById('val-hdg').innerText = currentHeading.toFixed(0);
+        }
+
+        function handleMotion(e) {
+            const acc = e.acceleration;
+            if(acc) {
+                // Simple magnitude calculation
+                currentAcc = Math.sqrt(acc.x*acc.x + acc.y*acc.y + acc.z*acc.z);
+                document.getElementById('val-acc').innerText = currentAcc.toFixed(2);
+            }
+        }
+
+        // --- 2. DATA LOGGING LOOP ---
+        function logDataPoint() {
+            // We log data constantly, but we flag if video is recording
+            if(currentLat !== 0) {
+                sessionData.track_points.push({
+                    time: (Date.now() - sessionData.startTime) / 1000, // Relative seconds
+                    absTime: Date.now(),
+                    lat: currentLat,
+                    lng: currentLng,
+                    heading: currentHeading,
+                    acc: currentAcc,
+                    isRecordingVideo: isRecording
+                });
+            }
+        }
+
+        // --- 3. VIDEO LOGIC ---
+        function toggleVideo() {
+            const btn = document.getElementById('btn-video');
+            const indicator = document.getElementById('rec-indicator');
+
+            if(!isRecording) {
+                // START
+                chunks = [];
+                // Mime type check for Safari compatibility
+                const mime = MediaRecorder.isTypeSupported("video/mp4") ? "video/mp4" : "video/webm";
+                
+                mediaRecorder = new MediaRecorder(stream, { mimeType: mime });
+                mediaRecorder.ondataavailable = e => chunks.push(e.data);
+                mediaRecorder.onstop = () => {
+                    const blob = new Blob(chunks, { type: mime });
+                    sessionData.videoBlob = blob;
+                    document.getElementById('btn-save').style.display = 'flex'; // Show Save Button
+                    alert("Video Saved to RAM. Press SAVE DB to store permanently.");
+                };
+                
+                mediaRecorder.start();
+                isRecording = true;
+                btn.classList.add('recording');
+                btn.innerText = "STOP";
+                indicator.style.display = 'block';
+
+            } else {
+                // STOP
+                mediaRecorder.stop();
+                isRecording = false;
+                btn.classList.remove('recording');
+                btn.innerText = "REC";
+                indicator.style.display = 'none';
+            }
+        }
+
+        // --- 4. PHOTO LOGIC ---
+        function takePhoto() {
+            const video = document.getElementById('camera-feed');
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+            
+            // Create Data URL
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+            
+            // Save metadata
+            sessionData.photos.push({
+                time: (Date.now() - sessionData.startTime) / 1000,
+                lat: currentLat,
+                lng: currentLng,
+                heading: currentHeading,
+                url: dataUrl // Base64 string (heavy, but fine for IndexedDB)
+            });
+            
+            // Visual feedback
+            const btn = document.getElementById('btn-photo');
+            btn.style.borderColor = "#4fceff";
+            setTimeout(() => btn.style.borderColor = "#ccc", 200);
+            
+            // Show save button immediately after a photo too
+            document.getElementById('btn-save').style.display = 'flex';
+        }
+
+        // --- 5. INDEXED DB SAVING (The Fix) ---
+        function saveSession() {
+            const request = indexedDB.open("RunTrackerDB", 1);
+            
+            request.onupgradeneeded = function(e) {
+                const db = e.target.result;
+                if (!db.objectStoreNames.contains("sessions")) {
+                    db.createObjectStore("sessions", { keyPath: "id", autoIncrement: true });
+                }
+            };
+
+            request.onsuccess = function(e) {
+                const db = e.target.result;
+                const tx = db.transaction("sessions", "readwrite");
+                const store = tx.objectStore("sessions");
+
+                // Finalize the record
+                const record = {
+                    date: new Date().toISOString(),
+                    type: "hybrid-run",
+                    data: sessionData
+                };
+
+                store.add(record);
+
+                tx.oncomplete = function() {
+                    alert("✅ SAVED TO DEVICE! Check 'Session Manager'.");
+                    location.reload(); // Reset for next run
+                };
+                
+                tx.onerror = function() {
+                    alert("❌ Save Failed. Video might be too big for this device.");
+                };
+            };
+        }
+    </script>
+</body>
+</html>
