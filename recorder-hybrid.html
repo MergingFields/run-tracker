@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Run Recorder V7</title>
+    <title>Run Recorder V8</title>
     <style>
         body { margin: 0; background: #000; color: #fff; font-family: system-ui, -apple-system, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
         
@@ -45,10 +45,10 @@
     </div>
 
     <div id="screen-start" class="modal">
-        <h1>🏃 RUN RECORDER V7</h1>
+        <h1>🏃 RUN RECORDER V8</h1>
         <button id="btn-perm" class="big-btn btn-blue">1. ENABLE SENSORS</button>
         <button id="btn-go" class="big-btn btn-green">2. START RUN</button>
-        <div style="margin-top:20px; font-size:12px; color:#aaa;">DB v101 (Force Update)</div>
+        <div style="margin-top:20px; font-size:12px; color:#aaa;">DB v102 (Sync Fix)</div>
     </div>
 
     <div id="screen-pause" class="modal hidden">
@@ -84,20 +84,20 @@
         let state = { startTime:0, elapsedTime:0, isRunning:false, isPaused:false, isRecordingVideo:false, trackPoints:[], photos:[], videoChunks:[], currentHeading:0 };
         let mediaRecorder, videoStream, timerInterval, globalDB = null;
 
-        // --- 1. INIT DB V101 (SINGLE CONNECTION) ---
+        // --- 1. INIT DB V102 ---
         function initDB() {
-            log("Init: Connecting to DB v101...");
-            const req = indexedDB.open("RunTrackerDB", 101); // Version Bump!
+            log("Init: Connecting to DB v102...");
+            const req = indexedDB.open("RunTrackerDB", 102); 
             
             req.onupgradeneeded = e => {
-                log("DB: Upgrading to v101...");
+                log("DB: Upgrading to v102...");
                 const db = e.target.result;
                 if(db.objectStoreNames.contains("sessions")) db.deleteObjectStore("sessions");
                 db.createObjectStore("sessions", { keyPath: "id", autoIncrement: true });
             };
             
             req.onsuccess = e => {
-                log("DB: Connected (v101).");
+                log("DB: Connected (v102).");
                 globalDB = e.target.result;
             };
             req.onerror = e => log("DB Init Error: " + e.target.error);
@@ -152,7 +152,6 @@
         window.resumeRun = () => { state.isPaused = false; document.getElementById('screen-pause').classList.add('hidden'); };
         
         window.takePhoto = () => {
-            // Flash visual
             const flash = document.getElementById('flash-overlay');
             flash.style.animation = 'none'; flash.offsetHeight; flash.style.animation = 'flashAnim 0.3s ease-out';
             
@@ -183,7 +182,7 @@
             }
         };
 
-        // --- 4. FINISH & SAVE (SAFE MODE) ---
+        // --- 4. FINISH & SAVE ---
         window.finishRun = () => {
             document.getElementById('saving-overlay').classList.remove('hidden');
             log("Finish: Saving...");
@@ -191,7 +190,7 @@
             if(!globalDB) return alert("DB Lost. Reload app.");
 
             let finalBlob = null;
-            if(state.videoChunks.length) finalBlob = new Blob(state.videoChunks, {type: "video/mp4"}); // Simplified type
+            if(state.videoChunks.length) finalBlob = new Blob(state.videoChunks, {type: "video/mp4"}); 
 
             const session = {
                 date: new Date().toISOString(),
