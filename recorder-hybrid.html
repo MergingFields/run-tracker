@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Run Recorder V5 (Debug)</title>
+    <title>Run Recorder V6 (Stable)</title>
     <style>
         /* APP LAYOUT */
         body { margin: 0; background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -67,10 +67,10 @@
     </div>
 
     <div id="screen-start" class="modal">
-        <h1 style="margin-bottom: 10px;">🏃 RUN RECORDER V5</h1>
+        <h1 style="margin-bottom: 10px;">🏃 RUN RECORDER V6</h1>
         <button id="btn-perm" class="big-btn btn-blue">1. ENABLE SENSORS</button>
         <button id="btn-go" class="big-btn btn-green">2. START RUN</button>
-        <div id="perm-msg" style="margin-top:20px; font-size:12px; color:#aaa;">Debug Mode Active</div>
+        <div id="perm-msg" style="margin-top:20px; font-size:12px; color:#aaa;">Stable Connection Mode</div>
     </div>
 
     <div id="screen-pause" class="modal hidden">
@@ -97,7 +97,7 @@
     </div>
 
     <script>
-        // UTILS: Logging to screen
+        // LOGGING UTILS
         function log(msg) {
             console.log(msg);
             const d = document.getElementById('debug-log');
@@ -105,6 +105,7 @@
             d.scrollTop = d.scrollHeight;
         }
 
+        // GLOBAL STATE
         let state = {
             startTime: 0, elapsedTime: 0, 
             isRunning: false, isPaused: false, isRecordingVideo: false,
@@ -116,23 +117,32 @@
         let videoStream;
         let timerInterval;
         let geoWatchId;
+        
+        // --- KEY CHANGE: GLOBAL DATABASE VARIABLE ---
+        let globalDB = null;
 
-        // --- INIT DB ON LOAD ---
+        // --- INIT DB ON LOAD (SINGLE CONNECTION) ---
         function initDB() {
-            log("Init: Opening DB 'RunTrackerDB' v99");
-            const req = indexedDB.open("RunTrackerDB", 99);
+            log("Init: Connecting to RunTrackerDB v100..."); // Version 100 to force clear
+            const req = indexedDB.open("RunTrackerDB", 100);
+            
             req.onupgradeneeded = e => {
-                log("DB: Upgrade needed. Creating object store...");
+                log("DB: Upgrade needed. Creating object store 'sessions'...");
                 const db = e.target.result;
                 if(db.objectStoreNames.contains("sessions")) db.deleteObjectStore("sessions");
                 db.createObjectStore("sessions", { keyPath: "id", autoIncrement: true });
             };
-            req.onsuccess = () => log("DB: Ready.");
+            
+            req.onsuccess = e => {
+                log("DB: Connected Successfully.");
+                globalDB = e.target.result; // SAVE CONNECTION GLOBALLY
+            };
+            
             req.onerror = e => log("DB Init Error: " + e.target.error);
         }
         initDB();
 
-        // --- SENSORS & CAMERA ---
+        // --- SENSORS ---
         document.getElementById('btn-perm').addEventListener('click', function() {
             if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
                 DeviceOrientationEvent.requestPermission().then(r => {
@@ -150,7 +160,12 @@
             document.getElementById('btn-go').style.display = 'block';
         }
 
+        // --- START ---
         document.getElementById('btn-go').addEventListener('click', async function() {
+            if(!globalDB) {
+                alert("Database not ready yet. Please wait a moment.");
+                return;
+            }
             try {
                 videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: true });
                 document.getElementById('camera-feed').srcObject = videoStream;
@@ -239,10 +254,16 @@
             }
         }
 
-        // --- FINISH & SAVE (WITH EVENT LISTENERS) ---
+        // --- FINISH & SAVE (USING GLOBAL CONNECTION) ---
         function finishRun() {
             document.getElementById('saving-overlay').classList.remove('hidden');
             log("Finish: Compiling data...");
+
+            if(!globalDB) {
+                log("CRITICAL ERROR: Global DB connection lost.");
+                alert("Database lost. Try downloading data manually?");
+                return;
+            }
 
             try {
                 // 1. Compile Blob
@@ -265,47 +286,37 @@
                     videoBlob: finalVideoBlob
                 };
 
-                // 2. Open DB
-                log("DB: Opening for write...");
-                const req = indexedDB.open("RunTrackerDB", 99);
+                // 2. USE GLOBAL DB (No re-opening)
+                log("DB: Starting transaction on existing connection...");
+                
+                // --- CRITICAL TRY/CATCH AROUND TRANSACTION CREATION ---
+                // This is where it froze before. Now we catch the error.
+                let tx;
+                try {
+                    tx = globalDB.transaction("sessions", "readwrite");
+                } catch (txErr) {
+                    log("CRITICAL TX ERROR: " + txErr.message);
+                    log("Is 'sessions' store missing? " + !globalDB.objectStoreNames.contains("sessions"));
+                    return;
+                }
 
-                req.onsuccess = e => {
-                    log("DB: Opened successfully.");
-                    const db = e.target.result;
-                    
-                    // 3. Start Transaction
-                    log("DB: Starting transaction...");
-                    const tx = db.transaction("sessions", "readwrite");
-                    
-                    // --- TRANSACTION EVENT LISTENERS ---
-                    tx.oncomplete = function() {
-                        log("DB Transaction: COMPLETE! Redirecting...");
-                        setTimeout(() => window.location.href = "session-manager.html", 1000);
-                    };
-
-                    tx.onabort = function(e) {
-                        log("DB Transaction: ABORTED!");
-                        log("Reason: " + (tx.error ? tx.error.message : "Unknown (Quota exceeded?)"));
-                    };
-
-                    tx.onerror = function(e) {
-                        log("DB Transaction: ERROR!");
-                        log("Details: " + (e.target.error ? e.target.error.message : "Unknown"));
-                    };
-
-                    // 4. Add Data
-                    log("DB: Requesting add...");
-                    const store = tx.objectStore("sessions");
-                    const addReq = store.add(session);
-
-                    addReq.onsuccess = () => log("DB: Add request accepted. Waiting for write...");
-                    addReq.onerror = (e) => log("DB: Add request failed: " + e.target.error);
+                tx.oncomplete = function() {
+                    log("DB Transaction: COMPLETE! Redirecting...");
+                    setTimeout(() => window.location.href = "session-manager.html", 1000);
                 };
 
-                req.onerror = e => log("DB Open Error: " + e.target.error);
+                tx.onabort = function(e) { log("DB Transaction: ABORTED! " + (tx.error ? tx.error.message : "Unknown")); };
+                tx.onerror = function(e) { log("DB Transaction: ERROR! " + (e.target.error ? e.target.error.message : "Unknown")); };
+
+                log("DB: Requesting add...");
+                const store = tx.objectStore("sessions");
+                const addReq = store.add(session);
+
+                addReq.onsuccess = () => log("DB: Add request accepted. Waiting for write...");
+                addReq.onerror = (e) => log("DB: Add request failed: " + e.target.error);
 
             } catch(err) {
-                log("CRITICAL ERROR: " + err.message);
+                log("GENERAL ERROR: " + err.message);
             }
         }
     </script>
