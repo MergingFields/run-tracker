@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Session Manager V8</title>
+    <title>Session Manager V9</title>
     <style>
         body { background: #111; color: #eee; font-family: system-ui; padding: 20px; }
         h1 { border-bottom: 1px solid #333; padding-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
@@ -29,7 +29,7 @@
     
     <h1>
         Saved Sessions
-        <span class="version-tag">Manager V8 (v102)</span>
+        <span class="version-tag">Manager V9 (v103)</span>
     </h1>
     
     <div id="list">Loading...</div>
@@ -41,13 +41,13 @@
     <script>
         const list = document.getElementById('list');
 
-        // --- CONNECT TO V102 ---
-        const request = indexedDB.open("RunTrackerDB", 102);
+        // --- CONNECT TO V103 ---
+        const request = indexedDB.open("RunTrackerDB", 103);
         
         request.onsuccess = function(e) {
             const db = e.target.result;
             if(!db.objectStoreNames.contains("sessions")) {
-                list.innerHTML = "<div class='empty-msg'>Database connected (v102), but 'sessions' store is missing.<br>Please record a new run.</div>";
+                list.innerHTML = "<div class='empty-msg'>Database connected (v103), but no sessions found.<br>Record a new run!</div>";
                 return;
             }
             loadSessions(db);
@@ -55,7 +55,7 @@
 
         request.onerror = function(e) {
             console.error(e);
-            list.innerHTML = `<div style="color:red">Error opening DB v102: ${e.target.error}</div>`;
+            list.innerHTML = `<div style="color:red">Error opening DB v103: ${e.target.error}</div>`;
         };
 
         function loadSessions(db) {
@@ -72,8 +72,20 @@
                     list.innerHTML = '';
                     runs.forEach(run => {
                         const date = new Date(run.date).toLocaleString();
-                        const hasVideo = !!run.videoBlob;
-                        const vidSize = hasVideo ? (run.videoBlob.size/1024/1024).toFixed(1)+"MB" : "None";
+                        
+                        // Handle both old (videoBlob) and new (videos array)
+                        let vidCount = 0;
+                        let totalSize = 0;
+                        if(run.videos && Array.isArray(run.videos)) {
+                            vidCount = run.videos.length;
+                            run.videos.forEach(v => totalSize += v.size);
+                        } else if(run.videoBlob) {
+                            vidCount = 1;
+                            totalSize = run.videoBlob.size;
+                        }
+
+                        const vidLabel = vidCount > 0 ? `${(totalSize/1024/1024).toFixed(1)}MB` : "None";
+                        const vidBtnText = vidCount > 1 ? `VIDEOS (${vidCount})` : "VIDEO";
                         
                         const div = document.createElement('div');
                         div.className = 'session-card';
@@ -82,11 +94,11 @@
                             <div class="stats">
                                 <span>⏱ ${Math.floor(run.duration/60)}:${(run.duration%60).toString().padStart(2,'0')}</span>
                                 <span>📸 ${run.photos ? run.photos.length : 0}</span>
-                                <span>💾 ${vidSize}</span>
+                                <span>💾 ${vidLabel}</span>
                             </div>
                             <div class="btn-group">
                                 <button class="btn-json" onclick="downloadJSON(${run.id})">DATA</button>
-                                ${hasVideo ? `<button class="btn-vid" onclick="downloadVideo(${run.id})">VIDEO</button>` : ''}
+                                ${vidCount > 0 ? `<button class="btn-vid" onclick="downloadVideo(${run.id})">${vidBtnText}</button>` : ''}
                                 <button class="btn-del" onclick="deleteRun(${run.id})">🗑</button>
                             </div>
                         `;
@@ -101,7 +113,8 @@
         function downloadJSON(id) {
             useDB(store => {
                 store.get(id).onsuccess = e => {
-                    const { videoBlob, ...data } = e.target.result; 
+                    // Exclude video blobs from JSON file to keep it small
+                    const { videoBlob, videos, ...data } = e.target.result; 
                     const url = URL.createObjectURL(new Blob([JSON.stringify(data,null,2)], {type:'application/json'}));
                     const a = document.createElement('a'); a.href=url; a.download=`Run_${data.date}.json`; a.click();
                 };
@@ -111,17 +124,34 @@
         function downloadVideo(id) {
             useDB(store => {
                 store.get(id).onsuccess = e => {
-                    const blob = e.target.result.videoBlob;
-                    if(!blob) return alert("No video.");
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a'); a.href=url; a.download=`Video_${e.target.result.date}.mp4`; a.click();
+                    const data = e.target.result;
+                    
+                    // HANDLE ARRAY (V9+)
+                    if(data.videos && Array.isArray(data.videos)) {
+                        data.videos.forEach((blob, index) => {
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a'); 
+                            a.href = url; 
+                            a.download = `RunVideo_${index+1}_${data.date}.mp4`; 
+                            a.click();
+                        });
+                        return;
+                    }
+
+                    // HANDLE SINGLE BLOB (V8)
+                    if(data.videoBlob) {
+                        const url = URL.createObjectURL(data.videoBlob);
+                        const a = document.createElement('a'); a.href=url; a.download=`RunVideo_${data.date}.mp4`; a.click();
+                    } else {
+                        alert("No video found.");
+                    }
                 };
             });
         }
 
         function deleteRun(id) {
             if(!confirm("Delete?")) return;
-            const req = indexedDB.open("RunTrackerDB", 102);
+            const req = indexedDB.open("RunTrackerDB", 103);
             req.onsuccess = e => {
                 const tx = e.target.result.transaction("sessions", "readwrite");
                 tx.objectStore("sessions").delete(id);
@@ -136,7 +166,7 @@
         }
 
         function useDB(cb) {
-            const req = indexedDB.open("RunTrackerDB", 102);
+            const req = indexedDB.open("RunTrackerDB", 103);
             req.onsuccess = e => cb(e.target.result.transaction("sessions", "readonly").objectStore("sessions"));
         }
     </script>

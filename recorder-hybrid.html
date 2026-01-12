@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Run Recorder V8</title>
+    <title>Run Recorder V9</title>
     <style>
         body { margin: 0; background: #000; color: #fff; font-family: system-ui, -apple-system, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
         
@@ -45,10 +45,10 @@
     </div>
 
     <div id="screen-start" class="modal">
-        <h1>🏃 RUN RECORDER V8</h1>
+        <h1>🏃 RUN RECORDER V9</h1>
         <button id="btn-perm" class="big-btn btn-blue">1. ENABLE SENSORS</button>
         <button id="btn-go" class="big-btn btn-green">2. START RUN</button>
-        <div style="margin-top:20px; font-size:12px; color:#aaa;">DB v102 (Sync Fix)</div>
+        <div style="margin-top:20px; font-size:12px; color:#aaa;">DB v103 (Multi-Video + Head)</div>
     </div>
 
     <div id="screen-pause" class="modal hidden">
@@ -81,23 +81,24 @@
             d.innerHTML += `[${new Date().toLocaleTimeString()}] ${msg}\n`;
         }
 
-        let state = { startTime:0, elapsedTime:0, isRunning:false, isPaused:false, isRecordingVideo:false, trackPoints:[], photos:[], videoChunks:[], currentHeading:0 };
+        // STATE includes 'recordedClips' array now
+        let state = { startTime:0, elapsedTime:0, isRunning:false, isPaused:false, isRecordingVideo:false, trackPoints:[], photos:[], videoChunks:[], recordedClips:[], currentHeading:0 };
         let mediaRecorder, videoStream, timerInterval, globalDB = null;
 
-        // --- 1. INIT DB V102 ---
+        // --- 1. INIT DB V103 ---
         function initDB() {
-            log("Init: Connecting to DB v102...");
-            const req = indexedDB.open("RunTrackerDB", 102); 
+            log("Init: Connecting to DB v103...");
+            const req = indexedDB.open("RunTrackerDB", 103); 
             
             req.onupgradeneeded = e => {
-                log("DB: Upgrading to v102...");
+                log("DB: Upgrading to v103...");
                 const db = e.target.result;
                 if(db.objectStoreNames.contains("sessions")) db.deleteObjectStore("sessions");
                 db.createObjectStore("sessions", { keyPath: "id", autoIncrement: true });
             };
             
             req.onsuccess = e => {
-                log("DB: Connected (v102).");
+                log("DB: Connected (v103).");
                 globalDB = e.target.result;
             };
             req.onerror = e => log("DB Init Error: " + e.target.error);
@@ -146,7 +147,9 @@
         window.pauseRun = () => {
             state.isPaused = true;
             document.getElementById('screen-pause').classList.remove('hidden');
-            document.getElementById('pause-stats').innerText = `${state.trackPoints.length} Points • ${state.photos.length} Photos`;
+            // Show Count of Videos
+            const vidCount = state.recordedClips.length + (state.isRecordingVideo ? 1 : 0);
+            document.getElementById('pause-stats').innerText = `${state.trackPoints.length} Pts • ${state.photos.length} Photos • ${vidCount} Vids`;
             if(state.isRecordingVideo) toggleVideo();
         };
         window.resumeRun = () => { state.isPaused = false; document.getElementById('screen-pause').classList.add('hidden'); };
@@ -162,20 +165,42 @@
             
             let lat=0, lng=0;
             if(state.trackPoints.length) { lat=state.trackPoints.at(-1).lat; lng=state.trackPoints.at(-1).lng; }
-            state.photos.push({ time:state.elapsedTime, lat:lat, lng:lng, url:cvs.toDataURL('image/jpeg', 0.6) });
+            
+            // FIX: Added Heading here
+            state.photos.push({ 
+                time:state.elapsedTime, 
+                lat:lat, 
+                lng:lng, 
+                heading: state.currentHeading, 
+                url:cvs.toDataURL('image/jpeg', 0.6) 
+            });
         };
 
         window.toggleVideo = () => {
             const btn = document.getElementById('btn-rec');
             if(!state.isRecordingVideo) {
+                // START
                 state.videoChunks = [];
                 const mime = MediaRecorder.isTypeSupported("video/mp4") ? "video/mp4" : "video/webm";
                 mediaRecorder = new MediaRecorder(videoStream, {mimeType:mime});
+                
+                // SAVE CHUNK LOGIC
                 mediaRecorder.ondataavailable = e => { if(e.data.size>0) state.videoChunks.push(e.data); };
+                
+                // STOP LOGIC (Save to Clips Array)
+                mediaRecorder.onstop = () => {
+                    if(state.videoChunks.length > 0) {
+                        const blob = new Blob(state.videoChunks, {type: mime});
+                        state.recordedClips.push(blob);
+                        log(`Saved Clip #${state.recordedClips.length} (${(blob.size/1024/1024).toFixed(2)}MB)`);
+                    }
+                };
+
                 mediaRecorder.start();
                 state.isRecordingVideo = true;
                 btn.classList.add('recording'); document.getElementById('rec-status').innerText="REC"; document.getElementById('rec-status').style.color="red";
             } else {
+                // STOP
                 mediaRecorder.stop();
                 state.isRecordingVideo = false;
                 btn.classList.remove('recording'); document.getElementById('rec-status').innerText="STBY"; document.getElementById('rec-status').style.color="#aaa";
@@ -189,20 +214,18 @@
 
             if(!globalDB) return alert("DB Lost. Reload app.");
 
-            let finalBlob = null;
-            if(state.videoChunks.length) finalBlob = new Blob(state.videoChunks, {type: "video/mp4"}); 
-
             const session = {
                 date: new Date().toISOString(),
                 type: 'hybrid-run',
                 duration: state.elapsedTime,
                 track_points: state.trackPoints,
                 photos: state.photos,
-                videoBlob: finalBlob
+                // SAVE ARRAY OF BLOBS
+                videos: state.recordedClips 
             };
 
             try {
-                log("DB: Starting transaction on globalDB...");
+                log("DB: Starting transaction...");
                 const tx = globalDB.transaction("sessions", "readwrite");
                 
                 tx.oncomplete = () => {
@@ -210,7 +233,7 @@
                     window.location.href = "session-manager.html";
                 };
                 tx.onerror = e => log("TX Error: " + e.target.error);
-                tx.onabort = e => log("TX Aborted. (Video too big?)");
+                tx.onabort = e => log("TX Aborted.");
 
                 const store = tx.objectStore("sessions");
                 store.add(session);
