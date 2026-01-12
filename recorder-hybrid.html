@@ -3,251 +3,336 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Hybrid Recorder (DB)</title>
+    <title>Run Recorder</title>
     <style>
-        body { margin: 0; background: #000; color: #fff; font-family: sans-serif; overflow: hidden; display: flex; flex-direction: column; height: 100vh; }
+        /* APP LAYOUT */
+        body { margin: 0; background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
         
-        /* PREVIEW AREA */
-        #preview-container { flex: 1; position: relative; background: #111; }
+        /* 1. CAMERA VIEWFINDER (Background) */
+        #viewfinder { flex: 1; position: relative; background: #222; }
         video { width: 100%; height: 100%; object-fit: cover; }
         
-        /* OVERLAYS */
-        #stats-overlay { position: absolute; top: 10px; left: 10px; font-size: 12px; text-shadow: 1px 1px 2px black; pointer-events: none; }
-        #rec-indicator { position: absolute; top: 10px; right: 10px; color: red; font-weight: bold; display: none; animation: blink 1s infinite; }
+        /* 2. OVERLAYS (Status) */
+        #top-bar { 
+            position: absolute; top: 0; left: 0; width: 100%; 
+            padding: 15px; box-sizing: border-box;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent);
+            display: flex; justify-content: space-between; align-items: center;
+            pointer-events: none; /* Let clicks pass through */
+        }
+        .status-pill { background: rgba(0,0,0,0.5); padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold; display: flex; align-items: center; gap: 5px; }
+        .red-dot { width: 8px; height: 8px; background: red; border-radius: 50%; display: inline-block; animation: blink 1s infinite; display: none; }
+        
+        /* 3. CONTROL DECK (Bottom) */
+        #controls { 
+            height: 160px; background: rgba(0,0,0,0.8); 
+            display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: center; justify-items: center;
+            padding-bottom: 20px;
+        }
+
+        /* BUTTON STYLES */
+        .btn-action { 
+            width: 70px; height: 70px; border-radius: 50%; border: none; 
+            font-weight: bold; font-size: 12px; color: white; cursor: pointer;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            transition: transform 0.1s;
+        }
+        .btn-action:active { transform: scale(0.95); }
+
+        #btn-snap { background: #fff; border: 4px solid #ccc; color: #333; }
+        #btn-rec { background: #ff4444; border: 4px solid #fff; }
+        #btn-rec.recording { background: #fff; border-color: #ff4444; color: #ff4444; }
+
+        .btn-small { width: 50px; height: 50px; border-radius: 50%; font-size: 20px; background: #444; color: #fff; border: none; }
+        #btn-pause.paused { background: #ffd700; color: #000; }
+
+        /* 4. START / FINISH SCREENS (Modals) */
+        .modal { 
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            background: rgba(0,0,0,0.95); z-index: 999; 
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+        }
+        .hidden { display: none !important; }
+
+        .big-btn { 
+            padding: 20px 40px; font-size: 24px; font-weight: bold; 
+            border: none; border-radius: 50px; cursor: pointer; margin-top: 20px;
+        }
+        .btn-start { background: #00e676; color: #003b1f; }
+        .btn-finish { background: #ff4444; color: white; }
+        .btn-resume { background: #444; color: white; margin-top: 20px; font-size: 16px; padding: 15px 30px; }
+
+        /* ANIMATIONS */
         @keyframes blink { 50% { opacity: 0; } }
+        @keyframes flash { 0% { opacity: 1; } 100% { opacity: 0; } }
+        #flash-overlay { position: fixed; top:0; left:0; width:100%; height:100%; background:white; opacity:0; pointer-events:none; }
 
-        /* CONTROLS (Bottom Bar) */
-        #controls { height: 120px; background: rgba(0,0,0,0.5); display: flex; justify-content: space-around; align-items: center; padding: 0 20px; }
-        
-        .btn { width: 70px; height: 70px; border-radius: 50%; border: none; font-weight: bold; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 10px; }
-        
-        #btn-photo { background: white; color: black; border: 4px solid #ccc; }
-        #btn-photo:active { background: #ccc; }
-        
-        #btn-video { background: red; color: white; border: 4px solid #fff; }
-        #btn-video.recording { background: white; border-color: red; color: red; }
-
-        #btn-save { background: #4fceff; color: black; width: 60px; height: 60px; display: none; }
-        
-        /* IOS PERMISSION MODAL */
-        #ios-modal { position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:9999; display:flex; justify-content:center; align-items:center; flex-direction:column; }
-        #ios-modal button { padding: 20px; font-size: 18px; background: #0f0; border: none; border-radius: 10px; }
     </style>
 </head>
 <body>
 
-    <div id="ios-modal">
-        <h2 style="color:white; margin-bottom:20px;">Enable Sensors</h2>
-        <button onclick="requestPermissions()">START SESSION</button>
+    <div id="screen-start" class="modal">
+        <h1 style="margin-bottom: 10px;">🏃 RUN TRACKER</h1>
+        <div style="color: #aaa; margin-bottom: 40px;">GPS • Photo • Video</div>
+        <button class="big-btn btn-start" onclick="startRun()">START RUN</button>
+        <div id="perm-msg" style="margin-top:20px; font-size:12px; color:#666;">Requires Camera & GPS</div>
     </div>
 
-    <div id="preview-container">
+    <div id="screen-pause" class="modal hidden">
+        <h1>PAUSED</h1>
+        <div id="pause-stats" style="color: #aaa; margin-bottom: 30px;">00:00 • 0.00 km</div>
+        <button class="big-btn btn-finish" onclick="finishRun()">FINISH & SAVE</button>
+        <button class="big-btn btn-resume" onclick="resumeRun()">RESUME RUN</button>
+    </div>
+
+    <div id="viewfinder">
         <video id="camera-feed" autoplay playsinline muted></video>
-        <div id="stats-overlay">
-            HDG: <span id="val-hdg">0</span>°<br>
-            ACC: <span id="val-acc">0</span><br>
-            GPS: <span id="val-gps">Waiting...</span>
+        <div id="flash-overlay"></div>
+        
+        <div id="top-bar">
+            <div class="status-pill">
+                <span id="timer">00:00</span>
+            </div>
+            <div class="status-pill">
+                <span id="gps-status" style="color:orange;">GPS...</span>
+            </div>
+            <div class="status-pill">
+                <span class="red-dot" id="rec-dot"></span>
+                <span id="rec-text" style="color:#aaa;">STBY</span>
+            </div>
         </div>
-        <div id="rec-indicator">REC</div>
     </div>
 
     <div id="controls">
-        <button id="btn-photo" class="btn" onclick="takePhoto()">SNAP</button>
-        <button id="btn-video" class="btn" onclick="toggleVideo()">REC</button>
-        <button id="btn-save" class="btn" onclick="saveSession()">SAVE DB</button>
+        <button id="btn-pause" class="btn-small" onclick="pauseRun()">⏸</button>
+        
+        <button id="btn-snap" class="btn-action" onclick="takePhoto()">SNAP</button>
+        
+        <button id="btn-rec" class="btn-action" onclick="toggleVideo()">REC</button>
     </div>
 
     <script>
-        // --- STATE ---
-        let stream = null;
-        let mediaRecorder = null;
-        let chunks = [];
-        let sessionData = {
-            startTime: Date.now(),
-            track_points: [], // GPS + Motion stream
-            photos: [],       // Snapshots
-            videoBlob: null   // The recorded video file
+        // --- DATA STATE ---
+        let state = {
+            startTime: 0,
+            elapsedTime: 0, // In seconds
+            isRunning: false,
+            isPaused: false,
+            isRecordingVideo: false,
+            gpsActive: false,
+            trackPoints: [],
+            photos: [],
+            videoChunks: [],
+            currentHeading: 0
         };
-        let isRecording = false;
-        let watchID = null;
 
-        // Current Sensor Values
-        let currentHeading = 0;
-        let currentAcc = 0;
-        let currentLat = 0;
-        let currentLng = 0;
+        // --- SYSTEM VARS ---
+        let mediaRecorder;
+        let videoStream;
+        let timerInterval;
+        let geoWatchId;
 
-        // --- 1. INITIALIZATION & SENSORS ---
-        async function requestPermissions() {
-            document.getElementById('ios-modal').style.display = 'none';
-            
-            // Camera
+        // --- 1. START WORKFLOW ---
+        async function startRun() {
+            // A. Request Permissions
             try {
-                stream = await navigator.mediaDevices.getUserMedia({ 
+                // 1. Camera
+                videoStream = await navigator.mediaDevices.getUserMedia({ 
                     video: { facingMode: "environment" }, 
                     audio: true 
                 });
-                document.getElementById('camera-feed').srcObject = stream;
-            } catch(e) { alert("Camera Error: " + e); }
+                document.getElementById('camera-feed').srcObject = videoStream;
 
-            // GPS
-            if(navigator.geolocation) {
-                watchID = navigator.geolocation.watchPosition(pos => {
-                    currentLat = pos.coords.latitude;
-                    currentLng = pos.coords.longitude;
-                    document.getElementById('val-gps').innerText = `${currentLat.toFixed(4)}, ${currentLng.toFixed(4)}`;
-                }, err => console.error(err), { enableHighAccuracy: true });
-            }
-
-            // iOS 13+ Motion Permissions
-            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-                DeviceOrientationEvent.requestPermission()
-                    .then(response => {
-                        if (response == 'granted') window.addEventListener('deviceorientation', handleOrientation);
-                    })
-                    .catch(console.error);
-            } else {
-                window.addEventListener('deviceorientation', handleOrientation);
-            }
-            window.addEventListener('devicemotion', handleMotion);
-            
-            // Start the Data Loop (1Hz logging)
-            setInterval(logDataPoint, 1000); 
-        }
-
-        function handleOrientation(e) {
-            // iOS webkitCompassHeading is the true magnetic north
-            if(e.webkitCompassHeading) {
-                currentHeading = e.webkitCompassHeading;
-            } else if (e.alpha) {
-                currentHeading = 360 - e.alpha; // Android fallback
-            }
-            document.getElementById('val-hdg').innerText = currentHeading.toFixed(0);
-        }
-
-        function handleMotion(e) {
-            const acc = e.acceleration;
-            if(acc) {
-                // Simple magnitude calculation
-                currentAcc = Math.sqrt(acc.x*acc.x + acc.y*acc.y + acc.z*acc.z);
-                document.getElementById('val-acc').innerText = currentAcc.toFixed(2);
-            }
-        }
-
-        // --- 2. DATA LOGGING LOOP ---
-        function logDataPoint() {
-            // We log data constantly, but we flag if video is recording
-            if(currentLat !== 0) {
-                sessionData.track_points.push({
-                    time: (Date.now() - sessionData.startTime) / 1000, // Relative seconds
-                    absTime: Date.now(),
-                    lat: currentLat,
-                    lng: currentLng,
-                    heading: currentHeading,
-                    acc: currentAcc,
-                    isRecordingVideo: isRecording
+                // 2. iOS Motion (Heading)
+                if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    await DeviceOrientationEvent.requestPermission();
+                }
+                window.addEventListener('deviceorientation', e => {
+                    if(e.webkitCompassHeading) state.currentHeading = e.webkitCompassHeading;
                 });
+
+                // 3. GPS
+                if(navigator.geolocation) {
+                    geoWatchId = navigator.geolocation.watchPosition(
+                        pos => {
+                            state.gpsActive = true;
+                            document.getElementById('gps-status').style.color = '#00e676';
+                            document.getElementById('gps-status').innerText = 'GPS OK';
+                            
+                            if(state.isRunning && !state.isPaused) {
+                                recordPoint(pos);
+                            }
+                        }, 
+                        err => {
+                            document.getElementById('gps-status').style.color = 'red';
+                            document.getElementById('gps-status').innerText = 'NO GPS';
+                        },
+                        { enableHighAccuracy: true }
+                    );
+                }
+
+                // B. Switch UI
+                document.getElementById('screen-start').classList.add('hidden');
+                state.isRunning = true;
+                state.startTime = Date.now();
+                
+                // C. Start Timer
+                timerInterval = setInterval(updateTimer, 1000);
+
+            } catch(e) {
+                alert("Error starting: " + e.message);
             }
         }
 
-        // --- 3. VIDEO LOGIC ---
-        function toggleVideo() {
-            const btn = document.getElementById('btn-video');
-            const indicator = document.getElementById('rec-indicator');
-
-            if(!isRecording) {
-                // START
-                chunks = [];
-                // Mime type check for Safari compatibility
-                const mime = MediaRecorder.isTypeSupported("video/mp4") ? "video/mp4" : "video/webm";
-                
-                mediaRecorder = new MediaRecorder(stream, { mimeType: mime });
-                mediaRecorder.ondataavailable = e => chunks.push(e.data);
-                mediaRecorder.onstop = () => {
-                    const blob = new Blob(chunks, { type: mime });
-                    sessionData.videoBlob = blob;
-                    document.getElementById('btn-save').style.display = 'flex'; // Show Save Button
-                    alert("Video Saved to RAM. Press SAVE DB to store permanently.");
-                };
-                
-                mediaRecorder.start();
-                isRecording = true;
-                btn.classList.add('recording');
-                btn.innerText = "STOP";
-                indicator.style.display = 'block';
-
-            } else {
-                // STOP
-                mediaRecorder.stop();
-                isRecording = false;
-                btn.classList.remove('recording');
-                btn.innerText = "REC";
-                indicator.style.display = 'none';
-            }
+        // --- 2. THE LOOP ---
+        function updateTimer() {
+            if(state.isPaused) return;
+            
+            state.elapsedTime++;
+            const m = Math.floor(state.elapsedTime / 60).toString().padStart(2,'0');
+            const s = (state.elapsedTime % 60).toString().padStart(2,'0');
+            document.getElementById('timer').innerText = `${m}:${s}`;
         }
 
-        // --- 4. PHOTO LOGIC ---
+        function recordPoint(pos) {
+            state.trackPoints.push({
+                time: state.elapsedTime,
+                absTime: Date.now(),
+                lat: pos.coords.latitude,
+                lng: pos.coords.longitude,
+                heading: state.currentHeading,
+                videoActive: state.isRecordingVideo
+            });
+        }
+
+        // --- 3. ACTIONS ---
+        function pauseRun() {
+            state.isPaused = true;
+            document.getElementById('screen-pause').classList.remove('hidden');
+            document.getElementById('pause-stats').innerText = 
+                `Time: ${document.getElementById('timer').innerText} • Pts: ${state.trackPoints.length}`;
+            
+            // If recording video, stop it automatically
+            if(state.isRecordingVideo) toggleVideo();
+        }
+
+        function resumeRun() {
+            state.isPaused = false;
+            document.getElementById('screen-pause').classList.add('hidden');
+        }
+
         function takePhoto() {
+            // Flash Effect
+            const flash = document.getElementById('flash-overlay');
+            flash.style.animation = 'none';
+            flash.offsetHeight; /* trigger reflow */
+            flash.style.animation = 'flash 0.3s ease-out';
+
+            // Capture
             const video = document.getElementById('camera-feed');
             const canvas = document.createElement('canvas');
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
             canvas.getContext('2d').drawImage(video, 0, 0);
             
-            // Create Data URL
-            const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-            
-            // Save metadata
-            sessionData.photos.push({
-                time: (Date.now() - sessionData.startTime) / 1000,
-                lat: currentLat,
-                lng: currentLng,
-                heading: currentHeading,
-                url: dataUrl // Base64 string (heavy, but fine for IndexedDB)
+            state.photos.push({
+                time: state.elapsedTime,
+                lat: state.trackPoints.length > 0 ? state.trackPoints[state.trackPoints.length-1].lat : 0,
+                lng: state.trackPoints.length > 0 ? state.trackPoints[state.trackPoints.length-1].lng : 0,
+                heading: state.currentHeading,
+                url: canvas.toDataURL('image/jpeg', 0.7)
             });
-            
-            // Visual feedback
-            const btn = document.getElementById('btn-photo');
-            btn.style.borderColor = "#4fceff";
-            setTimeout(() => btn.style.borderColor = "#ccc", 200);
-            
-            // Show save button immediately after a photo too
-            document.getElementById('btn-save').style.display = 'flex';
         }
 
-        // --- 5. INDEXED DB SAVING (The Fix) ---
-        function saveSession() {
-            const request = indexedDB.open("RunTrackerDB", 1);
-            
-            request.onupgradeneeded = function(e) {
+        function toggleVideo() {
+            const btn = document.getElementById('btn-rec');
+            const dot = document.getElementById('rec-dot');
+            const txt = document.getElementById('rec-text');
+
+            if(!state.isRecordingVideo) {
+                // START REC
+                state.videoChunks = []; // Reset chunks (Simple version: one video per run or overwrite. 
+                                        // For complex multiple clips, we'd need a clip list. 
+                                        // Let's assume 1 continuous clip or last clip wins for this v1 fix).
+                                        
+                // NOTE: To support multiple clips in one run, we would need to push blobs to an array.
+                // For simplicity/reliability in V1, let's treat it as "Start/Stop" = "Record Clip".
+                
+                try {
+                    const mime = MediaRecorder.isTypeSupported("video/mp4") ? "video/mp4" : "video/webm";
+                    mediaRecorder = new MediaRecorder(videoStream, { mimeType: mime });
+                    
+                    mediaRecorder.ondataavailable = e => {
+                        if(e.data.size > 0) state.videoChunks.push(e.data);
+                    };
+                    
+                    mediaRecorder.start();
+                    state.isRecordingVideo = true;
+                    
+                    // UI Updates
+                    btn.classList.add('recording');
+                    btn.innerText = "STOP";
+                    dot.style.display = 'inline-block';
+                    txt.innerText = "REC";
+                    txt.style.color = "red";
+                } catch(e) { alert("Video Error: " + e); }
+
+            } else {
+                // STOP REC
+                mediaRecorder.stop();
+                state.isRecordingVideo = false;
+                
+                // UI Updates
+                btn.classList.remove('recording');
+                btn.innerText = "REC";
+                dot.style.display = 'none';
+                txt.innerText = "STBY";
+                txt.style.color = "#aaa";
+            }
+        }
+
+        // --- 4. FINISH & SAVE ---
+        function finishRun() {
+            if(state.trackPoints.length === 0) {
+                alert("No GPS data recorded yet!");
+                return;
+            }
+
+            // Create Blob for Video (if any)
+            let finalVideoBlob = null;
+            if(state.videoChunks.length > 0) {
+                const mime = MediaRecorder.isTypeSupported("video/mp4") ? "video/mp4" : "video/webm";
+                finalVideoBlob = new Blob(state.videoChunks, {type: mime});
+            }
+
+            // Prepare DB Object
+            const session = {
+                date: new Date().toISOString(),
+                type: 'hybrid-run',
+                duration: state.elapsedTime,
+                track_points: state.trackPoints,
+                photos: state.photos,
+                videoBlob: finalVideoBlob
+            };
+
+            // Save to IndexedDB
+            const req = indexedDB.open("RunTrackerDB", 1);
+            req.onupgradeneeded = e => {
                 const db = e.target.result;
-                if (!db.objectStoreNames.contains("sessions")) {
+                if(!db.objectStoreNames.contains("sessions")) {
                     db.createObjectStore("sessions", { keyPath: "id", autoIncrement: true });
                 }
             };
-
-            request.onsuccess = function(e) {
+            req.onsuccess = e => {
                 const db = e.target.result;
                 const tx = db.transaction("sessions", "readwrite");
-                const store = tx.objectStore("sessions");
-
-                // Finalize the record
-                const record = {
-                    date: new Date().toISOString(),
-                    type: "hybrid-run",
-                    data: sessionData
-                };
-
-                store.add(record);
-
-                tx.oncomplete = function() {
-                    alert("✅ SAVED TO DEVICE! Check 'Session Manager'.");
-                    location.reload(); // Reset for next run
-                };
+                tx.objectStore("sessions").add(session);
                 
-                tx.onerror = function() {
-                    alert("❌ Save Failed. Video might be too big for this device.");
+                tx.oncomplete = () => {
+                    alert("✅ Run Saved! Returning to Menu.");
+                    window.location.href = "index.html"; // Or wherever your menu is
                 };
+                tx.onerror = () => alert("Save failed. Storage full?");
             };
         }
     </script>
