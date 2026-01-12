@@ -3,99 +3,68 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Run Recorder V6 (Stable)</title>
+    <title>Run Recorder V7</title>
     <style>
-        /* APP LAYOUT */
-        body { margin: 0; background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+        body { margin: 0; background: #000; color: #fff; font-family: system-ui, -apple-system, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
         
         #viewfinder { flex: 1; position: relative; background: #222; }
         video { width: 100%; height: 100%; object-fit: cover; }
         
-        #top-bar { 
-            position: absolute; top: 0; left: 0; width: 100%; 
-            padding: 15px; box-sizing: border-box;
-            background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent);
-            display: flex; justify-content: space-between; align-items: center; pointer-events: none; 
-        }
-        .status-pill { background: rgba(0,0,0,0.5); padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold; display: flex; align-items: center; gap: 5px; }
-        .red-dot { width: 8px; height: 8px; background: red; border-radius: 50%; display: inline-block; animation: blink 1s infinite; display: none; }
+        #top-bar { position: absolute; top: 0; left: 0; width: 100%; padding: 15px; background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent); display: flex; justify-content: space-between; pointer-events: none; }
+        .status-pill { background: rgba(0,0,0,0.5); padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold; }
         
-        #controls { 
-            height: 160px; background: rgba(0,0,0,0.8); 
-            display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: center; justify-items: center; padding-bottom: 20px;
-        }
-
-        .btn-action { width: 70px; height: 70px; border-radius: 50%; border: none; font-weight: bold; font-size: 12px; color: white; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.3); transition: transform 0.1s; }
-        .btn-action:active { transform: scale(0.95); }
+        #controls { height: 160px; background: rgba(0,0,0,0.9); display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: center; justify-items: center; }
+        .btn-action { width: 70px; height: 70px; border-radius: 50%; border: none; font-weight: bold; color: white; cursor: pointer; }
         #btn-snap { background: #fff; border: 4px solid #ccc; color: #333; }
         #btn-rec { background: #ff4444; border: 4px solid #fff; }
-        #btn-rec.recording { background: #fff; border-color: #ff4444; color: #ff4444; }
-        .btn-small { width: 50px; height: 50px; border-radius: 50%; font-size: 20px; background: #444; color: #fff; border: none; }
+        #btn-rec.recording { background: #fff; border-color: red; color: red; }
+        .btn-small { width: 50px; height: 50px; border-radius: 50%; background: #444; color: #fff; border: none; font-size: 20px; }
 
         .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 999; display: flex; flex-direction: column; justify-content: center; align-items: center; }
         .hidden { display: none !important; }
-
-        .big-btn { padding: 20px 40px; font-size: 20px; font-weight: bold; border: none; border-radius: 50px; cursor: pointer; margin-top: 20px; width: 80%; }
+        .big-btn { padding: 20px 40px; font-size: 20px; font-weight: bold; border: none; border-radius: 50px; margin-top: 20px; width: 80%; cursor: pointer; }
         .btn-blue { background: #4fceff; color: #000; }
         .btn-green { background: #00e676; color: #003b1f; display: none; }
         .btn-finish { background: #ff4444; color: white; }
-        .btn-resume { background: #444; color: white; margin-top: 20px; font-size: 16px; padding: 15px 30px; }
+        .btn-resume { background: #444; color: white; }
 
-        /* DEBUG OVERLAY */
-        #saving-overlay {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.95); z-index: 2000;
-            display: flex; flex-direction: column; justify-content: flex-start; align-items: center;
-            color: #4fceff; font-family: monospace; font-size: 14px; padding-top: 50px;
-        }
-        #debug-log {
-            width: 90%; height: 60%; background: #111; border: 1px solid #333; 
-            margin-top: 20px; padding: 10px; overflow-y: auto; color: #0f0; font-size: 10px; white-space: pre-wrap;
-        }
-
-        @keyframes blink { 50% { opacity: 0; } }
-        /* FLASH ANIMATION FOR PHOTO */
-        @keyframes flashAnim { 
-            0% { opacity: 0; } 
-            10% { opacity: 1; } 
-            100% { opacity: 0; } 
-        }
-        #flash-overlay { 
-            position: fixed; top:0; left:0; width:100%; height:100%; 
-            background:white; opacity:0; pointer-events:none; 
-        }
+        #saving-overlay { position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.95); z-index:2000; display:flex; flex-direction:column; align-items:center; padding-top:50px; color:#4fceff; font-family:monospace; }
+        #debug-log { width:90%; height:50%; background:#111; border:1px solid #333; margin-top:20px; padding:10px; font-size:10px; overflow-y:auto; color:#0f0; }
+        
+        @keyframes flashAnim { 0% { opacity: 0; } 10% { opacity: 1; } 100% { opacity: 0; } }
+        #flash-overlay { position: fixed; top:0; left:0; width:100%; height:100%; background:white; opacity:0; pointer-events:none; }
     </style>
 </head>
 <body>
 
     <div id="saving-overlay" class="hidden">
-        <div style="font-size: 30px; margin-bottom: 10px;">💾 SAVING...</div>
+        <div style="font-size: 30px;">💾 SAVING...</div>
         <div>Do not close tab</div>
-        <div id="debug-log">Waiting for logs...</div>
+        <div id="debug-log">Log started...</div>
         <button onclick="window.location.reload()" style="margin-top:20px; padding:10px; background:#333; color:white; border:none;">Force Reload</button>
     </div>
 
     <div id="screen-start" class="modal">
-        <h1 style="margin-bottom: 10px;">🏃 RUN RECORDER V6</h1>
+        <h1>🏃 RUN RECORDER V7</h1>
         <button id="btn-perm" class="big-btn btn-blue">1. ENABLE SENSORS</button>
         <button id="btn-go" class="big-btn btn-green">2. START RUN</button>
-        <div id="perm-msg" style="margin-top:20px; font-size:12px; color:#aaa;">Stable Connection Mode</div>
+        <div style="margin-top:20px; font-size:12px; color:#aaa;">DB v101 (Force Update)</div>
     </div>
 
     <div id="screen-pause" class="modal hidden">
         <h1>PAUSED</h1>
-        <div id="pause-stats" style="color: #aaa; margin-bottom: 30px;">00:00 • 0 Pts</div>
+        <div id="pause-stats" style="color:#aaa; margin-bottom:30px;">Stats here</div>
         <button class="big-btn btn-finish" onclick="finishRun()">FINISH & SAVE</button>
-        <button class="big-btn btn-resume" onclick="resumeRun()">RESUME RUN</button>
+        <button class="big-btn btn-resume" onclick="resumeRun()">RESUME</button>
     </div>
 
     <div id="viewfinder">
         <video id="camera-feed" autoplay playsinline muted></video>
         <div id="flash-overlay"></div>
         <div id="top-bar">
-            <div class="status-pill"><span id="timer">00:00</span></div>
-            <div class="status-pill"><span id="gps-status" style="color:orange;">GPS...</span></div>
-            <div class="status-pill"><span class="red-dot" id="rec-dot"></span><span id="rec-text" style="color:#aaa;">STBY</span></div>
+            <div class="status-pill" id="timer">00:00</div>
+            <div class="status-pill" id="gps-status" style="color:orange;">GPS...</div>
+            <div class="status-pill" id="rec-status" style="color:#aaa;">STBY</div>
         </div>
     </div>
 
@@ -106,234 +75,151 @@
     </div>
 
     <script>
-        // LOGGING UTILS
         function log(msg) {
             console.log(msg);
             const d = document.getElementById('debug-log');
             d.innerHTML += `[${new Date().toLocaleTimeString()}] ${msg}\n`;
-            d.scrollTop = d.scrollHeight;
         }
 
-        // GLOBAL STATE
-        let state = {
-            startTime: 0, elapsedTime: 0, 
-            isRunning: false, isPaused: false, isRecordingVideo: false,
-            gpsActive: false, trackPoints: [], photos: [], videoChunks: [],
-            currentHeading: 0
-        };
+        let state = { startTime:0, elapsedTime:0, isRunning:false, isPaused:false, isRecordingVideo:false, trackPoints:[], photos:[], videoChunks:[], currentHeading:0 };
+        let mediaRecorder, videoStream, timerInterval, globalDB = null;
 
-        let mediaRecorder;
-        let videoStream;
-        let timerInterval;
-        let geoWatchId;
-        
-        // --- KEY CHANGE: GLOBAL DATABASE VARIABLE ---
-        let globalDB = null;
-
-        // --- INIT DB ON LOAD (SINGLE CONNECTION) ---
+        // --- 1. INIT DB V101 (SINGLE CONNECTION) ---
         function initDB() {
-            log("Init: Connecting to RunTrackerDB v100..."); // Version 100 to force clear
-            const req = indexedDB.open("RunTrackerDB", 100);
+            log("Init: Connecting to DB v101...");
+            const req = indexedDB.open("RunTrackerDB", 101); // Version Bump!
             
             req.onupgradeneeded = e => {
-                log("DB: Upgrade needed. Creating object store 'sessions'...");
+                log("DB: Upgrading to v101...");
                 const db = e.target.result;
                 if(db.objectStoreNames.contains("sessions")) db.deleteObjectStore("sessions");
                 db.createObjectStore("sessions", { keyPath: "id", autoIncrement: true });
             };
             
             req.onsuccess = e => {
-                log("DB: Connected Successfully.");
-                globalDB = e.target.result; // SAVE CONNECTION GLOBALLY
+                log("DB: Connected (v101).");
+                globalDB = e.target.result;
             };
-            
             req.onerror = e => log("DB Init Error: " + e.target.error);
         }
         initDB();
 
-        // --- SENSORS ---
-        document.getElementById('btn-perm').addEventListener('click', function() {
-            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        // --- 2. SENSORS & START ---
+        document.getElementById('btn-perm').addEventListener('click', () => {
+            if (typeof DeviceOrientationEvent?.requestPermission === 'function') {
                 DeviceOrientationEvent.requestPermission().then(r => {
-                    if(r==='granted') { window.addEventListener('deviceorientation', handleOrientation); showStepTwo(); }
-                    else { alert("Sensors Denied"); showStepTwo(); }
-                }).catch(e => alert(e));
+                    if(r==='granted') { window.addEventListener('deviceorientation', e => state.currentHeading = e.webkitCompassHeading || (360-e.alpha)); showStep2(); }
+                    else { alert("Sensors Denied"); showStep2(); }
+                });
             } else {
-                window.addEventListener('deviceorientation', handleOrientation);
-                showStepTwo();
+                window.addEventListener('deviceorientation', e => state.currentHeading = 360-e.alpha);
+                showStep2();
             }
         });
+        function showStep2() { document.getElementById('btn-perm').style.display='none'; document.getElementById('btn-go').style.display='block'; }
 
-        function showStepTwo() {
-            document.getElementById('btn-perm').style.display = 'none';
-            document.getElementById('btn-go').style.display = 'block';
-        }
-
-        // --- START ---
-        document.getElementById('btn-go').addEventListener('click', async function() {
-            if(!globalDB) {
-                alert("Database not ready yet. Please wait a moment.");
-                return;
-            }
+        document.getElementById('btn-go').addEventListener('click', async () => {
+            if(!globalDB) return alert("DB not ready. Wait 2s.");
             try {
-                videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: true });
+                videoStream = await navigator.mediaDevices.getUserMedia({ video:{facingMode:"environment"}, audio:true });
                 document.getElementById('camera-feed').srcObject = videoStream;
-                startGPS();
+                navigator.geolocation.watchPosition(
+                    p => { 
+                        document.getElementById('gps-status').innerText='GPS OK'; document.getElementById('gps-status').style.color='#0f0';
+                        if(state.isRunning && !state.isPaused) state.trackPoints.push({time:state.elapsedTime, lat:p.coords.latitude, lng:p.coords.longitude, heading:state.currentHeading});
+                    },
+                    e => document.getElementById('gps-status').innerText='NO GPS', {enableHighAccuracy:true}
+                );
                 document.getElementById('screen-start').classList.add('hidden');
-                state.isRunning = true;
-                state.startTime = Date.now();
-                timerInterval = setInterval(updateTimer, 1000);
-            } catch (e) { alert("Camera Error: " + e.message); }
+                state.isRunning = true; state.startTime = Date.now();
+                timerInterval = setInterval(() => {
+                    if(!state.isPaused) {
+                        state.elapsedTime++;
+                        const m=Math.floor(state.elapsedTime/60).toString().padStart(2,'0'), s=(state.elapsedTime%60).toString().padStart(2,'0');
+                        document.getElementById('timer').innerText=`${m}:${s}`;
+                    }
+                }, 1000);
+            } catch(e) { alert("Cam Error: "+e); }
         });
 
-        function startGPS() {
-            if(navigator.geolocation) {
-                geoWatchId = navigator.geolocation.watchPosition(
-                    pos => {
-                        state.gpsActive = true;
-                        document.getElementById('gps-status').innerText = 'GPS OK';
-                        document.getElementById('gps-status').style.color = '#00e676';
-                        if(state.isRunning && !state.isPaused) recordPoint(pos);
-                    }, 
-                    err => document.getElementById('gps-status').innerText = 'NO GPS',
-                    { enableHighAccuracy: true }
-                );
-            }
-        }
-
-        function handleOrientation(e) {
-            state.currentHeading = e.webkitCompassHeading || (360 - e.alpha) || 0;
-        }
-
-        function updateTimer() {
-            if(state.isPaused) return;
-            state.elapsedTime++;
-            const m = Math.floor(state.elapsedTime / 60).toString().padStart(2,'0');
-            const s = (state.elapsedTime % 60).toString().padStart(2,'0');
-            document.getElementById('timer').innerText = `${m}:${s}`;
-        }
-
-        function recordPoint(pos) {
-            state.trackPoints.push({
-                time: state.elapsedTime, absTime: Date.now(),
-                lat: pos.coords.latitude, lng: pos.coords.longitude,
-                heading: state.currentHeading
-            });
-        }
-
-        function pauseRun() {
+        // --- 3. ACTIONS ---
+        window.pauseRun = () => {
             state.isPaused = true;
             document.getElementById('screen-pause').classList.remove('hidden');
-            document.getElementById('pause-stats').innerText = `${document.getElementById('timer').innerText} • ${state.trackPoints.length} Pts`;
+            document.getElementById('pause-stats').innerText = `${state.trackPoints.length} Points • ${state.photos.length} Photos`;
             if(state.isRecordingVideo) toggleVideo();
-        }
-
-        function resumeRun() {
-            state.isPaused = false;
-            document.getElementById('screen-pause').classList.add('hidden');
-        }
-
-        function takePhoto() {
-            // 1. VISUAL FEEDBACK: Flash the screen
+        };
+        window.resumeRun = () => { state.isPaused = false; document.getElementById('screen-pause').classList.add('hidden'); };
+        
+        window.takePhoto = () => {
+            // Flash visual
             const flash = document.getElementById('flash-overlay');
-            flash.style.animation = 'none';
-            flash.offsetHeight; /* trigger reflow */
-            flash.style.animation = 'flashAnim 0.3s ease-out';
-
-            const video = document.getElementById('camera-feed');
-            const canvas = document.createElement('canvas');
-            canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-            canvas.getContext('2d').drawImage(video, 0, 0);
+            flash.style.animation = 'none'; flash.offsetHeight; flash.style.animation = 'flashAnim 0.3s ease-out';
+            
+            const vid = document.getElementById('camera-feed');
+            const cvs = document.createElement('canvas');
+            cvs.width = vid.videoWidth; cvs.height = vid.videoHeight;
+            cvs.getContext('2d').drawImage(vid,0,0);
             
             let lat=0, lng=0;
-            if(state.trackPoints.length > 0) { lat=state.trackPoints.at(-1).lat; lng=state.trackPoints.at(-1).lng; }
-            state.photos.push({ time: state.elapsedTime, lat:lat, lng:lng, url: canvas.toDataURL('image/jpeg', 0.6) });
-        }
+            if(state.trackPoints.length) { lat=state.trackPoints.at(-1).lat; lng=state.trackPoints.at(-1).lng; }
+            state.photos.push({ time:state.elapsedTime, lat:lat, lng:lng, url:cvs.toDataURL('image/jpeg', 0.6) });
+        };
 
-        function toggleVideo() {
+        window.toggleVideo = () => {
             const btn = document.getElementById('btn-rec');
             if(!state.isRecordingVideo) {
                 state.videoChunks = [];
-                try {
-                    const mime = MediaRecorder.isTypeSupported("video/mp4") ? "video/mp4" : "video/webm";
-                    mediaRecorder = new MediaRecorder(videoStream, { mimeType: mime });
-                    mediaRecorder.ondataavailable = e => { if(e.data.size > 0) state.videoChunks.push(e.data); };
-                    mediaRecorder.start();
-                    state.isRecordingVideo = true;
-                    btn.classList.add('recording'); btn.innerText = "STOP"; document.getElementById('rec-dot').style.display='inline-block';
-                } catch(e) { alert("Video Error: "+e); }
+                const mime = MediaRecorder.isTypeSupported("video/mp4") ? "video/mp4" : "video/webm";
+                mediaRecorder = new MediaRecorder(videoStream, {mimeType:mime});
+                mediaRecorder.ondataavailable = e => { if(e.data.size>0) state.videoChunks.push(e.data); };
+                mediaRecorder.start();
+                state.isRecordingVideo = true;
+                btn.classList.add('recording'); document.getElementById('rec-status').innerText="REC"; document.getElementById('rec-status').style.color="red";
             } else {
                 mediaRecorder.stop();
                 state.isRecordingVideo = false;
-                btn.classList.remove('recording'); btn.innerText = "REC"; document.getElementById('rec-dot').style.display='none';
+                btn.classList.remove('recording'); document.getElementById('rec-status').innerText="STBY"; document.getElementById('rec-status').style.color="#aaa";
             }
-        }
+        };
 
-        // --- FINISH & SAVE (USING GLOBAL CONNECTION) ---
-        function finishRun() {
+        // --- 4. FINISH & SAVE (SAFE MODE) ---
+        window.finishRun = () => {
             document.getElementById('saving-overlay').classList.remove('hidden');
-            log("Finish: Compiling data...");
+            log("Finish: Saving...");
 
-            if(!globalDB) {
-                log("CRITICAL ERROR: Global DB connection lost.");
-                alert("Database lost. Try downloading data manually?");
-                return;
-            }
+            if(!globalDB) return alert("DB Lost. Reload app.");
+
+            let finalBlob = null;
+            if(state.videoChunks.length) finalBlob = new Blob(state.videoChunks, {type: "video/mp4"}); // Simplified type
+
+            const session = {
+                date: new Date().toISOString(),
+                type: 'hybrid-run',
+                duration: state.elapsedTime,
+                track_points: state.trackPoints,
+                photos: state.photos,
+                videoBlob: finalBlob
+            };
 
             try {
-                // 1. Compile Blob
-                let finalVideoBlob = null;
-                if(state.videoChunks.length > 0) {
-                    log(`Video: Compiling ${state.videoChunks.length} chunks...`);
-                    const mime = MediaRecorder.isTypeSupported("video/mp4") ? "video/mp4" : "video/webm";
-                    finalVideoBlob = new Blob(state.videoChunks, {type: mime});
-                    log(`Video: Blob created. Size: ${(finalVideoBlob.size/1024/1024).toFixed(2)} MB`);
-                } else {
-                    log("Video: No video recorded.");
-                }
-
-                const session = {
-                    date: new Date().toISOString(),
-                    type: 'hybrid-run',
-                    duration: state.elapsedTime,
-                    track_points: state.trackPoints,
-                    photos: state.photos,
-                    videoBlob: finalVideoBlob
-                };
-
-                // 2. USE GLOBAL DB (No re-opening)
-                log("DB: Starting transaction on existing connection...");
+                log("DB: Starting transaction on globalDB...");
+                const tx = globalDB.transaction("sessions", "readwrite");
                 
-                // --- CRITICAL TRY/CATCH AROUND TRANSACTION CREATION ---
-                // This is where it froze before. Now we catch the error.
-                let tx;
-                try {
-                    tx = globalDB.transaction("sessions", "readwrite");
-                } catch (txErr) {
-                    log("CRITICAL TX ERROR: " + txErr.message);
-                    log("Is 'sessions' store missing? " + !globalDB.objectStoreNames.contains("sessions"));
-                    return;
-                }
-
-                tx.oncomplete = function() {
-                    log("DB Transaction: COMPLETE! Redirecting...");
-                    setTimeout(() => window.location.href = "session-manager.html", 1000);
+                tx.oncomplete = () => {
+                    log("SUCCESS! Redirecting...");
+                    window.location.href = "session-manager.html";
                 };
+                tx.onerror = e => log("TX Error: " + e.target.error);
+                tx.onabort = e => log("TX Aborted. (Video too big?)");
 
-                tx.onabort = function(e) { log("DB Transaction: ABORTED! " + (tx.error ? tx.error.message : "Unknown")); };
-                tx.onerror = function(e) { log("DB Transaction: ERROR! " + (e.target.error ? e.target.error.message : "Unknown")); };
-
-                log("DB: Requesting add...");
                 const store = tx.objectStore("sessions");
-                const addReq = store.add(session);
-
-                addReq.onsuccess = () => log("DB: Add request accepted. Waiting for write...");
-                addReq.onerror = (e) => log("DB: Add request failed: " + e.target.error);
-
-            } catch(err) {
-                log("GENERAL ERROR: " + err.message);
+                store.add(session);
+                log("DB: Add request sent.");
+            } catch(e) {
+                log("CRITICAL: " + e.message);
             }
-        }
+        };
     </script>
 </body>
 </html>
