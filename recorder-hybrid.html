@@ -8,11 +8,9 @@
         /* APP LAYOUT */
         body { margin: 0; background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
         
-        /* 1. CAMERA VIEWFINDER (Background) */
         #viewfinder { flex: 1; position: relative; background: #222; }
         video { width: 100%; height: 100%; object-fit: cover; }
         
-        /* 2. OVERLAYS (Status) */
         #top-bar { 
             position: absolute; top: 0; left: 0; width: 100%; 
             padding: 15px; box-sizing: border-box;
@@ -23,14 +21,12 @@
         .status-pill { background: rgba(0,0,0,0.5); padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold; display: flex; align-items: center; gap: 5px; }
         .red-dot { width: 8px; height: 8px; background: red; border-radius: 50%; display: inline-block; animation: blink 1s infinite; display: none; }
         
-        /* 3. CONTROL DECK (Bottom) */
         #controls { 
             height: 160px; background: rgba(0,0,0,0.8); 
             display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: center; justify-items: center;
             padding-bottom: 20px;
         }
 
-        /* BUTTON STYLES */
         .btn-action { 
             width: 70px; height: 70px; border-radius: 50%; border: none; 
             font-weight: bold; font-size: 12px; color: white; cursor: pointer;
@@ -46,7 +42,6 @@
         .btn-small { width: 50px; height: 50px; border-radius: 50%; font-size: 20px; background: #444; color: #fff; border: none; }
         #btn-pause.paused { background: #ffd700; color: #000; }
 
-        /* 4. START / FINISH SCREENS */
         .modal { 
             position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
             background: rgba(0,0,0,0.95); z-index: 999; 
@@ -62,7 +57,6 @@
         .btn-finish { background: #ff4444; color: white; }
         .btn-resume { background: #444; color: white; margin-top: 20px; font-size: 16px; padding: 15px 30px; }
 
-        /* ANIMATIONS */
         @keyframes blink { 50% { opacity: 0; } }
         @keyframes flash { 0% { opacity: 1; } 100% { opacity: 0; } }
         #flash-overlay { position: fixed; top:0; left:0; width:100%; height:100%; background:white; opacity:0; pointer-events:none; }
@@ -73,7 +67,9 @@
     <div id="screen-start" class="modal">
         <h1 style="margin-bottom: 10px;">🏃 RUN TRACKER</h1>
         <div style="color: #aaa; margin-bottom: 40px;">GPS • Photo • Video</div>
-        <button class="big-btn btn-start" onclick="startRun()">START RUN</button>
+        
+        <button id="btn-start" class="big-btn btn-start">START RUN</button>
+        
         <div id="perm-msg" style="margin-top:20px; font-size:12px; color:#666;">Requires Camera & GPS</div>
     </div>
 
@@ -87,18 +83,10 @@
     <div id="viewfinder">
         <video id="camera-feed" autoplay playsinline muted></video>
         <div id="flash-overlay"></div>
-        
         <div id="top-bar">
-            <div class="status-pill">
-                <span id="timer">00:00</span>
-            </div>
-            <div class="status-pill">
-                <span id="gps-status" style="color:orange;">GPS...</span>
-            </div>
-            <div class="status-pill">
-                <span class="red-dot" id="rec-dot"></span>
-                <span id="rec-text" style="color:#aaa;">STBY</span>
-            </div>
+            <div class="status-pill"><span id="timer">00:00</span></div>
+            <div class="status-pill"><span id="gps-status" style="color:orange;">GPS...</span></div>
+            <div class="status-pill"><span class="red-dot" id="rec-dot"></span><span id="rec-text" style="color:#aaa;">STBY</span></div>
         </div>
     </div>
 
@@ -109,75 +97,70 @@
     </div>
 
     <script>
-        // --- DATA STATE ---
         let state = {
-            startTime: 0,
-            elapsedTime: 0, 
-            isRunning: false,
-            isPaused: false,
-            isRecordingVideo: false,
-            gpsActive: false,
-            trackPoints: [],
-            photos: [],
-            videoChunks: [],
+            startTime: 0, elapsedTime: 0, 
+            isRunning: false, isPaused: false, isRecordingVideo: false,
+            gpsActive: false, trackPoints: [], photos: [], videoChunks: [],
             currentHeading: 0
         };
 
-        // --- SYSTEM VARS ---
         let mediaRecorder;
         let videoStream;
         let timerInterval;
         let geoWatchId;
 
-        // --- 1. START WORKFLOW (FIXED ORDER) ---
-        async function startRun() {
+        // --- NEW: DIRECT EVENT LISTENER ---
+        // This attaches the permission request directly to the button click event
+        document.getElementById('btn-start').addEventListener('click', async function() {
             try {
-                // FIX: Request Compass (Motion) FIRST, before anything else!
-                // This captures the "User Click" immediately.
+                // 1. COMPASS (Motion) - MUST BE FIRST
                 if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                    const permission = await DeviceOrientationEvent.requestPermission();
-                    if (permission === 'granted') {
+                    const response = await DeviceOrientationEvent.requestPermission();
+                    if (response === 'granted') {
                         window.addEventListener('deviceorientation', handleOrientation);
                     } else {
-                        alert("Compass permission denied. Heading will be 0.");
+                        alert("Compass denied.");
                     }
                 } else {
-                    // Non-iOS devices
                     window.addEventListener('deviceorientation', handleOrientation);
                 }
 
-                // 2. NOW we can wait for the Camera (which takes time)
+                // 2. CAMERA (Takes time, so we do it second)
                 videoStream = await navigator.mediaDevices.getUserMedia({ 
                     video: { facingMode: "environment" }, 
                     audio: true 
                 });
                 document.getElementById('camera-feed').srcObject = videoStream;
 
-                // 3. Start GPS
-                if(navigator.geolocation) {
-                    geoWatchId = navigator.geolocation.watchPosition(
-                        pos => {
-                            state.gpsActive = true;
-                            document.getElementById('gps-status').style.color = '#00e676';
-                            document.getElementById('gps-status').innerText = 'GPS OK';
-                            if(state.isRunning && !state.isPaused) recordPoint(pos);
-                        }, 
-                        err => {
-                            document.getElementById('gps-status').style.color = 'red';
-                            document.getElementById('gps-status').innerText = 'NO GPS';
-                        },
-                        { enableHighAccuracy: true }
-                    );
-                }
+                // 3. GPS
+                startGPS();
 
-                // 4. Switch UI
+                // 4. UI SWITCH
                 document.getElementById('screen-start').classList.add('hidden');
                 state.isRunning = true;
                 state.startTime = Date.now();
                 timerInterval = setInterval(updateTimer, 1000);
 
-            } catch(e) {
-                alert("Error starting: " + e.message);
+            } catch (e) {
+                alert("Start Error: " + e.message);
+            }
+        });
+
+        function startGPS() {
+            if(navigator.geolocation) {
+                geoWatchId = navigator.geolocation.watchPosition(
+                    pos => {
+                        state.gpsActive = true;
+                        document.getElementById('gps-status').style.color = '#00e676';
+                        document.getElementById('gps-status').innerText = 'GPS OK';
+                        if(state.isRunning && !state.isPaused) recordPoint(pos);
+                    }, 
+                    err => {
+                        document.getElementById('gps-status').style.color = 'red';
+                        document.getElementById('gps-status').innerText = 'NO GPS';
+                    },
+                    { enableHighAccuracy: true }
+                );
             }
         }
 
@@ -186,7 +169,6 @@
             else if(e.alpha) state.currentHeading = 360 - e.alpha;
         }
 
-        // --- 2. THE LOOP ---
         function updateTimer() {
             if(state.isPaused) return;
             state.elapsedTime++;
@@ -206,7 +188,6 @@
             });
         }
 
-        // --- 3. ACTIONS ---
         function pauseRun() {
             state.isPaused = true;
             document.getElementById('screen-pause').classList.remove('hidden');
@@ -232,7 +213,6 @@
             canvas.height = video.videoHeight;
             canvas.getContext('2d').drawImage(video, 0, 0);
             
-            // Get last known location
             let lat = 0, lng = 0;
             if(state.trackPoints.length > 0) {
                 lat = state.trackPoints[state.trackPoints.length-1].lat;
@@ -241,9 +221,7 @@
 
             state.photos.push({
                 time: state.elapsedTime,
-                lat: lat,
-                lng: lng,
-                heading: state.currentHeading,
+                lat: lat, lng: lng, heading: state.currentHeading,
                 url: canvas.toDataURL('image/jpeg', 0.7)
             });
         }
@@ -263,7 +241,6 @@
                     };
                     mediaRecorder.start();
                     state.isRecordingVideo = true;
-                    
                     btn.classList.add('recording');
                     btn.innerText = "STOP";
                     dot.style.display = 'inline-block';
@@ -281,19 +258,16 @@
             }
         }
 
-        // --- 4. FINISH & SAVE ---
         function finishRun() {
             if(state.trackPoints.length === 0 && state.photos.length === 0) {
                 alert("No data recorded yet!");
                 return;
             }
-
             let finalVideoBlob = null;
             if(state.videoChunks.length > 0) {
                 const mime = MediaRecorder.isTypeSupported("video/mp4") ? "video/mp4" : "video/webm";
                 finalVideoBlob = new Blob(state.videoChunks, {type: mime});
             }
-
             const session = {
                 date: new Date().toISOString(),
                 type: 'hybrid-run',
@@ -302,7 +276,6 @@
                 photos: state.photos,
                 videoBlob: finalVideoBlob
             };
-
             const req = indexedDB.open("RunTrackerDB", 1);
             req.onupgradeneeded = e => {
                 const db = e.target.result;
