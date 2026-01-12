@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Run Recorder</title>
+    <title>Run Recorder v2</title>
     <style>
         /* APP LAYOUT */
         body { margin: 0; background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -109,41 +109,39 @@
         let timerInterval;
         let geoWatchId;
 
-        // --- NEW: DIRECT EVENT LISTENER ---
-        // This attaches the permission request directly to the button click event
-        document.getElementById('btn-start').addEventListener('click', async function() {
-            try {
-                // 1. COMPASS (Motion) - MUST BE FIRST
-                if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                    const response = await DeviceOrientationEvent.requestPermission();
-                    if (response === 'granted') {
-                        window.addEventListener('deviceorientation', handleOrientation);
-                    } else {
-                        alert("Compass denied.");
-                    }
-                } else {
+        // --- FIXED START SEQUENCE (PROMISE CHAIN) ---
+        document.getElementById('btn-start').addEventListener('click', function() {
+            
+            // 1. COMPASS (Motion) - strict first step
+            let motionPromise;
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                motionPromise = DeviceOrientationEvent.requestPermission();
+            } else {
+                motionPromise = Promise.resolve('granted');
+            }
+
+            motionPromise
+            .then(response => {
+                if (response === 'granted') {
                     window.addEventListener('deviceorientation', handleOrientation);
                 }
-
-                // 2. CAMERA (Takes time, so we do it second)
-                videoStream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "environment" }, 
-                    audio: true 
-                });
+                // 2. CAMERA (Only after motion is settled)
+                return navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: true });
+            })
+            .then(stream => {
+                videoStream = stream;
                 document.getElementById('camera-feed').srcObject = videoStream;
-
-                // 3. GPS
+                
+                // 3. START APP
                 startGPS();
-
-                // 4. UI SWITCH
                 document.getElementById('screen-start').classList.add('hidden');
                 state.isRunning = true;
                 state.startTime = Date.now();
                 timerInterval = setInterval(updateTimer, 1000);
-
-            } catch (e) {
-                alert("Start Error: " + e.message);
-            }
+            })
+            .catch(err => {
+                alert("Start Error: " + err.message + ". Close app and try again.");
+            });
         });
 
         function startGPS() {
@@ -276,7 +274,10 @@
                 photos: state.photos,
                 videoBlob: finalVideoBlob
             };
-            const req = indexedDB.open("RunTrackerDB", 1);
+            
+            // --- DB VERSION 2 UPGRADE ---
+            const req = indexedDB.open("RunTrackerDB", 2);
+            
             req.onupgradeneeded = e => {
                 const db = e.target.result;
                 if(!db.objectStoreNames.contains("sessions")) {
@@ -285,14 +286,19 @@
             };
             req.onsuccess = e => {
                 const db = e.target.result;
-                const tx = db.transaction("sessions", "readwrite");
-                tx.objectStore("sessions").add(session);
-                tx.oncomplete = () => {
-                    alert("✅ Run Saved! Returning to Menu.");
-                    window.location.href = "index.html"; 
-                };
-                tx.onerror = () => alert("Save failed. Storage full?");
+                try {
+                    const tx = db.transaction("sessions", "readwrite");
+                    tx.objectStore("sessions").add(session);
+                    tx.oncomplete = () => {
+                        alert("✅ Run Saved! Go to Session Manager.");
+                        window.location.href = "index.html"; 
+                    };
+                    tx.onerror = (err) => alert("Save Error: " + err.target.error);
+                } catch(err) {
+                    alert("DB Error: " + err.message);
+                }
             };
+            req.onerror = e => alert("DB Open Error: " + e.target.error);
         }
     </script>
 </body>

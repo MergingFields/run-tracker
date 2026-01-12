@@ -7,29 +7,19 @@
     <style>
         body { background: #111; color: #eee; font-family: sans-serif; padding: 20px; }
         h1 { border-bottom: 1px solid #333; padding-bottom: 10px; }
-        
-        .session-card {
-            background: #222; border: 1px solid #333; border-radius: 8px;
-            padding: 15px; margin-bottom: 15px;
-        }
+        .session-card { background: #222; border: 1px solid #333; border-radius: 8px; padding: 15px; margin-bottom: 15px; }
         .meta { color: #aaa; font-size: 14px; margin-bottom: 10px; }
         .stats { display: flex; gap: 15px; font-size: 12px; font-family: monospace; color: #4fceff; margin-bottom: 15px; }
-        
         .btn-group { display: flex; gap: 10px; }
-        button {
-            flex: 1; padding: 10px; border: none; border-radius: 4px;
-            font-weight: bold; cursor: pointer;
-        }
+        button { flex: 1; padding: 10px; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; }
         .btn-json { background: #4fceff; color: #000; }
         .btn-vid { background: #ff4444; color: #fff; }
         .btn-del { background: #333; color: #aaa; max-width: 50px; }
-        
         .empty-msg { color: #555; text-align: center; margin-top: 50px; }
         .back-link { display: inline-block; margin-bottom: 20px; color: #aaa; text-decoration: none; }
     </style>
 </head>
 <body>
-
     <a href="index.html" class="back-link">← Back to Menu</a>
     <h1>📂 Saved Sessions</h1>
     <div id="list">Loading...</div>
@@ -37,20 +27,20 @@
     <script>
         const list = document.getElementById('list');
 
-        // 1. OPEN DATABASE
-        const request = indexedDB.open("RunTrackerDB", 1);
+        // --- IMPORTANT: OPEN VERSION 2 ---
+        const request = indexedDB.open("RunTrackerDB", 2);
         
         request.onsuccess = function(e) {
             const db = e.target.result;
             if(!db.objectStoreNames.contains("sessions")) {
-                list.innerHTML = "<div class='empty-msg'>No database found. Record a run first!</div>";
+                list.innerHTML = "<div class='empty-msg'>Database OK, but no runs found.</div>";
                 return;
             }
             loadSessions(db);
         };
 
         request.onerror = function() {
-            list.innerHTML = "Error accessing database.";
+            list.innerHTML = "Error accessing database (Version mismatch?)";
         };
 
         function loadSessions(db) {
@@ -64,8 +54,6 @@
                     list.innerHTML = "<div class='empty-msg'>No saved runs yet.</div>";
                     return;
                 }
-                
-                // Sort by date (newest first)
                 runs.sort((a,b) => new Date(b.date) - new Date(a.date));
                 renderList(runs, db);
             };
@@ -101,19 +89,14 @@
             });
         }
 
-        // --- ACTIONS ---
-
         function downloadJSON(id) {
             useDB(store => {
                 const req = store.get(id);
                 req.onsuccess = () => {
                     const data = req.result;
-                    // Remove blob from JSON to keep it clean (video is downloaded separately)
                     const { videoBlob, ...jsonData } = data; 
-                    
                     const blob = new Blob([JSON.stringify(jsonData, null, 2)], {type : 'application/json'});
                     const url = URL.createObjectURL(blob);
-                    
                     const a = document.createElement('a');
                     a.href = url;
                     a.download = `Run_${data.date.replace(/:/g,'-')}.json`;
@@ -128,11 +111,9 @@
                 req.onsuccess = () => {
                     const data = req.result;
                     if(!data.videoBlob) return alert("No video in this session.");
-                    
                     const url = URL.createObjectURL(data.videoBlob);
                     const a = document.createElement('a');
                     a.href = url;
-                    // Detect extension
                     const ext = data.videoBlob.type.includes('mp4') ? 'mp4' : 'webm';
                     a.download = `Video_${data.date.replace(/:/g,'-')}.${ext}`;
                     a.click();
@@ -142,19 +123,17 @@
 
         function deleteRun(id) {
             if(!confirm("Delete this run permanently?")) return;
-            
-            const req = indexedDB.open("RunTrackerDB", 1);
+            const req = indexedDB.open("RunTrackerDB", 2); // Version 2
             req.onsuccess = e => {
                 const db = e.target.result;
                 const tx = db.transaction("sessions", "readwrite");
                 tx.objectStore("sessions").delete(id);
-                tx.oncomplete = () => loadSessions(db); // Reload list
+                tx.oncomplete = () => loadSessions(db);
             };
         }
 
-        // Helper to get DB quickly
         function useDB(callback) {
-            const req = indexedDB.open("RunTrackerDB", 1);
+            const req = indexedDB.open("RunTrackerDB", 2); // Version 2
             req.onsuccess = e => {
                 const db = e.target.result;
                 const tx = db.transaction("sessions", "readonly");
