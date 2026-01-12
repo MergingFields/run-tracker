@@ -27,20 +27,20 @@
     <script>
         const list = document.getElementById('list');
 
-        // --- IMPORTANT: OPEN VERSION 2 ---
-        const request = indexedDB.open("RunTrackerDB", 2);
+        // --- OPEN VERSION 99 ---
+        const request = indexedDB.open("RunTrackerDB", 99);
         
         request.onsuccess = function(e) {
             const db = e.target.result;
             if(!db.objectStoreNames.contains("sessions")) {
-                list.innerHTML = "<div class='empty-msg'>Database OK, but no runs found.</div>";
+                list.innerHTML = "<div class='empty-msg'>Database Reset. Record a new run!</div>";
                 return;
             }
             loadSessions(db);
         };
 
         request.onerror = function() {
-            list.innerHTML = "Error accessing database (Version mismatch?)";
+            list.innerHTML = "Error accessing database.";
         };
 
         function loadSessions(db) {
@@ -123,7 +123,7 @@
 
         function deleteRun(id) {
             if(!confirm("Delete this run permanently?")) return;
-            const req = indexedDB.open("RunTrackerDB", 2); // Version 2
+            const req = indexedDB.open("RunTrackerDB", 99); 
             req.onsuccess = e => {
                 const db = e.target.result;
                 const tx = db.transaction("sessions", "readwrite");
@@ -133,7 +133,7 @@
         }
 
         function useDB(callback) {
-            const req = indexedDB.open("RunTrackerDB", 2); // Version 2
+            const req = indexedDB.open("RunTrackerDB", 99); 
             req.onsuccess = e => {
                 const db = e.target.result;
                 const tx = db.transaction("sessions", "readonly");
