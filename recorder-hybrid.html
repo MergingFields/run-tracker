@@ -18,7 +18,7 @@
             padding: 15px; box-sizing: border-box;
             background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent);
             display: flex; justify-content: space-between; align-items: center;
-            pointer-events: none; /* Let clicks pass through */
+            pointer-events: none; 
         }
         .status-pill { background: rgba(0,0,0,0.5); padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold; display: flex; align-items: center; gap: 5px; }
         .red-dot { width: 8px; height: 8px; background: red; border-radius: 50%; display: inline-block; animation: blink 1s infinite; display: none; }
@@ -46,7 +46,7 @@
         .btn-small { width: 50px; height: 50px; border-radius: 50%; font-size: 20px; background: #444; color: #fff; border: none; }
         #btn-pause.paused { background: #ffd700; color: #000; }
 
-        /* 4. START / FINISH SCREENS (Modals) */
+        /* 4. START / FINISH SCREENS */
         .modal { 
             position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
             background: rgba(0,0,0,0.95); z-index: 999; 
@@ -66,7 +66,6 @@
         @keyframes blink { 50% { opacity: 0; } }
         @keyframes flash { 0% { opacity: 1; } 100% { opacity: 0; } }
         #flash-overlay { position: fixed; top:0; left:0; width:100%; height:100%; background:white; opacity:0; pointer-events:none; }
-
     </style>
 </head>
 <body>
@@ -80,7 +79,7 @@
 
     <div id="screen-pause" class="modal hidden">
         <h1>PAUSED</h1>
-        <div id="pause-stats" style="color: #aaa; margin-bottom: 30px;">00:00 • 0.00 km</div>
+        <div id="pause-stats" style="color: #aaa; margin-bottom: 30px;">00:00 • 0 Pts</div>
         <button class="big-btn btn-finish" onclick="finishRun()">FINISH & SAVE</button>
         <button class="big-btn btn-resume" onclick="resumeRun()">RESUME RUN</button>
     </div>
@@ -105,9 +104,7 @@
 
     <div id="controls">
         <button id="btn-pause" class="btn-small" onclick="pauseRun()">⏸</button>
-        
         <button id="btn-snap" class="btn-action" onclick="takePhoto()">SNAP</button>
-        
         <button id="btn-rec" class="btn-action" onclick="toggleVideo()">REC</button>
     </div>
 
@@ -115,7 +112,7 @@
         // --- DATA STATE ---
         let state = {
             startTime: 0,
-            elapsedTime: 0, // In seconds
+            elapsedTime: 0, 
             isRunning: false,
             isPaused: false,
             isRecordingVideo: false,
@@ -132,36 +129,38 @@
         let timerInterval;
         let geoWatchId;
 
-        // --- 1. START WORKFLOW ---
+        // --- 1. START WORKFLOW (FIXED ORDER) ---
         async function startRun() {
-            // A. Request Permissions
             try {
-                // 1. Camera
+                // FIX: Request Compass (Motion) FIRST, before anything else!
+                // This captures the "User Click" immediately.
+                if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    const permission = await DeviceOrientationEvent.requestPermission();
+                    if (permission === 'granted') {
+                        window.addEventListener('deviceorientation', handleOrientation);
+                    } else {
+                        alert("Compass permission denied. Heading will be 0.");
+                    }
+                } else {
+                    // Non-iOS devices
+                    window.addEventListener('deviceorientation', handleOrientation);
+                }
+
+                // 2. NOW we can wait for the Camera (which takes time)
                 videoStream = await navigator.mediaDevices.getUserMedia({ 
                     video: { facingMode: "environment" }, 
                     audio: true 
                 });
                 document.getElementById('camera-feed').srcObject = videoStream;
 
-                // 2. iOS Motion (Heading)
-                if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-                    await DeviceOrientationEvent.requestPermission();
-                }
-                window.addEventListener('deviceorientation', e => {
-                    if(e.webkitCompassHeading) state.currentHeading = e.webkitCompassHeading;
-                });
-
-                // 3. GPS
+                // 3. Start GPS
                 if(navigator.geolocation) {
                     geoWatchId = navigator.geolocation.watchPosition(
                         pos => {
                             state.gpsActive = true;
                             document.getElementById('gps-status').style.color = '#00e676';
                             document.getElementById('gps-status').innerText = 'GPS OK';
-                            
-                            if(state.isRunning && !state.isPaused) {
-                                recordPoint(pos);
-                            }
+                            if(state.isRunning && !state.isPaused) recordPoint(pos);
                         }, 
                         err => {
                             document.getElementById('gps-status').style.color = 'red';
@@ -171,12 +170,10 @@
                     );
                 }
 
-                // B. Switch UI
+                // 4. Switch UI
                 document.getElementById('screen-start').classList.add('hidden');
                 state.isRunning = true;
                 state.startTime = Date.now();
-                
-                // C. Start Timer
                 timerInterval = setInterval(updateTimer, 1000);
 
             } catch(e) {
@@ -184,10 +181,14 @@
             }
         }
 
+        function handleOrientation(e) {
+            if(e.webkitCompassHeading) state.currentHeading = e.webkitCompassHeading;
+            else if(e.alpha) state.currentHeading = 360 - e.alpha;
+        }
+
         // --- 2. THE LOOP ---
         function updateTimer() {
             if(state.isPaused) return;
-            
             state.elapsedTime++;
             const m = Math.floor(state.elapsedTime / 60).toString().padStart(2,'0');
             const s = (state.elapsedTime % 60).toString().padStart(2,'0');
@@ -210,9 +211,7 @@
             state.isPaused = true;
             document.getElementById('screen-pause').classList.remove('hidden');
             document.getElementById('pause-stats').innerText = 
-                `Time: ${document.getElementById('timer').innerText} • Pts: ${state.trackPoints.length}`;
-            
-            // If recording video, stop it automatically
+                `${document.getElementById('timer').innerText} • ${state.trackPoints.length} Pts`;
             if(state.isRecordingVideo) toggleVideo();
         }
 
@@ -222,23 +221,28 @@
         }
 
         function takePhoto() {
-            // Flash Effect
             const flash = document.getElementById('flash-overlay');
             flash.style.animation = 'none';
-            flash.offsetHeight; /* trigger reflow */
+            flash.offsetHeight; 
             flash.style.animation = 'flash 0.3s ease-out';
 
-            // Capture
             const video = document.getElementById('camera-feed');
             const canvas = document.createElement('canvas');
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
             canvas.getContext('2d').drawImage(video, 0, 0);
             
+            // Get last known location
+            let lat = 0, lng = 0;
+            if(state.trackPoints.length > 0) {
+                lat = state.trackPoints[state.trackPoints.length-1].lat;
+                lng = state.trackPoints[state.trackPoints.length-1].lng;
+            }
+
             state.photos.push({
                 time: state.elapsedTime,
-                lat: state.trackPoints.length > 0 ? state.trackPoints[state.trackPoints.length-1].lat : 0,
-                lng: state.trackPoints.length > 0 ? state.trackPoints[state.trackPoints.length-1].lng : 0,
+                lat: lat,
+                lng: lng,
                 heading: state.currentHeading,
                 url: canvas.toDataURL('image/jpeg', 0.7)
             });
@@ -250,39 +254,25 @@
             const txt = document.getElementById('rec-text');
 
             if(!state.isRecordingVideo) {
-                // START REC
-                state.videoChunks = []; // Reset chunks (Simple version: one video per run or overwrite. 
-                                        // For complex multiple clips, we'd need a clip list. 
-                                        // Let's assume 1 continuous clip or last clip wins for this v1 fix).
-                                        
-                // NOTE: To support multiple clips in one run, we would need to push blobs to an array.
-                // For simplicity/reliability in V1, let's treat it as "Start/Stop" = "Record Clip".
-                
+                state.videoChunks = []; 
                 try {
                     const mime = MediaRecorder.isTypeSupported("video/mp4") ? "video/mp4" : "video/webm";
                     mediaRecorder = new MediaRecorder(videoStream, { mimeType: mime });
-                    
                     mediaRecorder.ondataavailable = e => {
                         if(e.data.size > 0) state.videoChunks.push(e.data);
                     };
-                    
                     mediaRecorder.start();
                     state.isRecordingVideo = true;
                     
-                    // UI Updates
                     btn.classList.add('recording');
                     btn.innerText = "STOP";
                     dot.style.display = 'inline-block';
                     txt.innerText = "REC";
                     txt.style.color = "red";
                 } catch(e) { alert("Video Error: " + e); }
-
             } else {
-                // STOP REC
                 mediaRecorder.stop();
                 state.isRecordingVideo = false;
-                
-                // UI Updates
                 btn.classList.remove('recording');
                 btn.innerText = "REC";
                 dot.style.display = 'none';
@@ -293,19 +283,17 @@
 
         // --- 4. FINISH & SAVE ---
         function finishRun() {
-            if(state.trackPoints.length === 0) {
-                alert("No GPS data recorded yet!");
+            if(state.trackPoints.length === 0 && state.photos.length === 0) {
+                alert("No data recorded yet!");
                 return;
             }
 
-            // Create Blob for Video (if any)
             let finalVideoBlob = null;
             if(state.videoChunks.length > 0) {
                 const mime = MediaRecorder.isTypeSupported("video/mp4") ? "video/mp4" : "video/webm";
                 finalVideoBlob = new Blob(state.videoChunks, {type: mime});
             }
 
-            // Prepare DB Object
             const session = {
                 date: new Date().toISOString(),
                 type: 'hybrid-run',
@@ -315,7 +303,6 @@
                 videoBlob: finalVideoBlob
             };
 
-            // Save to IndexedDB
             const req = indexedDB.open("RunTrackerDB", 1);
             req.onupgradeneeded = e => {
                 const db = e.target.result;
@@ -327,10 +314,9 @@
                 const db = e.target.result;
                 const tx = db.transaction("sessions", "readwrite");
                 tx.objectStore("sessions").add(session);
-                
                 tx.oncomplete = () => {
                     alert("✅ Run Saved! Returning to Menu.");
-                    window.location.href = "index.html"; // Or wherever your menu is
+                    window.location.href = "index.html"; 
                 };
                 tx.onerror = () => alert("Save failed. Storage full?");
             };
