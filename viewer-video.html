@@ -2,261 +2,252 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Video Viewer - Robust Sync</title>
+    <title>Viewer - Event Driven (Fixed Layout)</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body {
-            margin: 0;
-            background: #000;
-            color: #fff;
-            font-family: monospace;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            overflow: hidden;
+        body { margin: 0; display: flex; height: 100vh; background: #222; color: #eee; font-family: sans-serif; overflow: hidden; }
+        
+        /* SIDEBAR: Fixed width on the left */
+        #sidebar { 
+            width: 250px; 
+            background: #333; 
+            padding: 10px; 
+            display: flex; 
+            flex-direction: column; 
+            gap: 15px; 
+            overflow-y: auto; 
+            border-right: 1px solid #444;
         }
 
-        #video-container {
-            position: relative;
-            width: 80%;
-            max-width: 1000px;
-            border: 2px solid #333;
-            background: #111;
-        }
-
-        video {
-            width: 100%;
-            display: block;
-        }
-
-        /* Overlay for lyrics or future drawing canvas */
-        #overlay-layer {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
+        /* MAIN AREA: Takes remaining space */
+        #main-area { 
+            flex: 1; 
+            display: flex; 
+            flex-direction: row; /* Side-by-Side Layout */
             height: 100%;
-            pointer-events: none; /* Let clicks pass through to video controls */
-            display: flex;
-            align-items: center;
-            justify-content: center;
+        }
+        
+        /* 50/50 Split for Map and Video */
+        #map-container { flex: 1; height: 100%; position: relative; }
+        #video-container { 
+            flex: 1; 
+            background: #000; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            border-left: 2px solid #444;
+        }
+        
+        /* Video fits inside container without scrolling */
+        video { 
+            max-width: 100%; 
+            max-height: 100%; 
+            width: auto; 
+            height: auto; 
         }
 
-        #lyric-display {
-            font-size: 2em;
+        /* Controls */
+        .control-group { background: #444; padding: 10px; border-radius: 4px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 11px; color: #aaa; letter-spacing: 1px; }
+        button, input[type="file"] { width: 100%; margin-bottom: 5px; font-size: 12px; }
+        
+        /* Data Display */
+        .data-row { display: flex; justify-content: space-between; font-family: monospace; font-size: 12px; margin-bottom: 2px; }
+        .val { color: #4fceff; }
+
+        /* Playlist */
+        #playlist { margin-top: 5px; max-height: 200px; overflow-y: auto; }
+        .playlist-item { 
+            padding: 6px; 
+            background: #555; 
+            margin-bottom: 2px; 
+            cursor: pointer; 
+            font-size: 11px; 
+            white-space: nowrap; 
+            overflow: hidden; 
+            text-overflow: ellipsis;
+        }
+        .playlist-item.active { background: #4fceff; color: #000; font-weight: bold; }
+        .playlist-item:hover { background: #666; }
+
+        /* Back Button */
+        .nav-btn {
+            display: block;
+            background: #666;
+            color: white;
             text-align: center;
-            text-shadow: 2px 2px 4px #000;
-            padding: 20px;
-            background: rgba(0, 0, 0, 0.4);
-        }
-
-        /* Debug Box Styling */
-        #debug-box {
-            position: fixed;
-            top: 10px;
-            left: 10px;
-            background: rgba(0, 0, 0, 0.85);
-            border: 1px solid #444;
-            padding: 10px;
+            padding: 8px;
+            text-decoration: none;
+            border-radius: 4px;
             font-size: 12px;
-            z-index: 9999;
-            width: 300px;
-            pointer-events: auto;
+            margin-bottom: 10px;
         }
-
-        .debug-row {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 4px;
-            border-bottom: 1px solid #333;
-        }
-
-        .debug-label { color: #aaa; }
-        .debug-val { color: #0f0; font-weight: bold; }
-        .debug-err { color: #f55; }
+        .nav-btn:hover { background: #888; }
     </style>
 </head>
 <body>
 
-    <div id="debug-box">
-        <div style="text-align:center; margin-bottom:5px; color:#fff;">DEBUGGER</div>
-        <div class="debug-row"><span class="debug-label">Status:</span><span id="dbg-status" class="debug-val">Init</span></div>
-        <div class="debug-row"><span class="debug-label">Track Start (Epoch):</span><span id="dbg-track-start" class="debug-val">0</span></div>
-        <div class="debug-row"><span class="debug-label">Server Time (Epoch):</span><span id="dbg-server-time" class="debug-val">0</span></div>
-        <div class="debug-row"><span class="debug-label">Calculated Offset (ms):</span><span id="dbg-offset" class="debug-val">0</span></div>
-        <div class="debug-row"><span class="debug-label">Video Target (sec):</span><span id="dbg-vid-target" class="debug-val">0.00</span></div>
-        <div class="debug-row"><span class="debug-label">Video Actual (sec):</span><span id="dbg-vid-actual" class="debug-val">0.00</span></div>
-        <div class="debug-row"><span class="debug-label">Drift (ms):</span><span id="dbg-drift" class="debug-val">0</span></div>
-    </div>
+    <div id="sidebar">
+        <a href="/" class="nav-btn">← BACK TO HUB</a>
 
-    <div id="video-container">
-        <video id="main-video" controls playsinline>
-            Your browser does not support the video tag.
-        </video>
-        <div id="overlay-layer">
-            <div id="lyric-display">Waiting for sync...</div>
+        <div class="control-group">
+            <label>1. LOAD DATA (JSON)</label>
+            <input type="file" id="jsonInput" accept=".json">
+            <div id="file-meta" style="font-size:11px; color:#aaa;">No file loaded</div>
+        </div>
+
+        <div class="control-group">
+            <label>2. PLAYLIST (Select Multiple)</label>
+            <input type="file" id="videoInput" accept="video/*" multiple>
+            <div id="playlist"></div>
+        </div>
+
+        <div class="control-group">
+            <label>LIVE TELEMETRY</label>
+            <div class="data-row"><span>Time:</span> <span id="disp-time" class="val">0.00</span></div>
+            <div class="data-row"><span>Vel:</span> <span id="disp-vel" class="val">0.00</span></div>
+            <div class="data-row"><span>Acc:</span> <span id="disp-acc" class="val">0.00</span></div>
+            <div class="data-row"><span>Heading:</span> <span id="disp-head" class="val">0°</span></div>
         </div>
     </div>
 
+    <div id="main-area">
+        <div id="map-container"></div>
+        <div id="video-container">
+            <video id="mainVideo" controls playsinline></video>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // --- CONFIGURATION ---
-        const urlParams = new URLSearchParams(window.location.search);
-        const SONG_ID = urlParams.get('songId') || '15A01'; // Default if missing
-        
-        // This should match the filename structure on your server
-        const VIDEO_SRC = `/media/videos/${SONG_ID}.mp4`; 
-        
         // --- STATE ---
         const state = {
-            trackStartTime: 0,   // Epoch ms when the track supposedly started
-            serverTime: 0,       // Current Epoch ms from server
-            isPlaying: false,    // Is the global state "playing"?
-            localVideoLoaded: false
+            data: null,
+            videos: [],
+            currentVideoIdx: 0,
+            isPlaying: false
         };
 
+        // --- ELEMENTS ---
         const els = {
-            video: document.getElementById('main-video'),
-            lyrics: document.getElementById('lyric-display'),
-            debug: {
-                status: document.getElementById('dbg-status'),
-                trackStart: document.getElementById('dbg-track-start'),
-                serverTime: document.getElementById('dbg-server-time'),
-                offset: document.getElementById('dbg-offset'),
-                target: document.getElementById('dbg-vid-target'),
-                actual: document.getElementById('dbg-vid-actual'),
-                drift: document.getElementById('dbg-drift'),
+            video: document.getElementById('mainVideo'),
+            map: document.getElementById('map-container'),
+            playlist: document.getElementById('playlist'),
+            displays: {
+                time: document.getElementById('disp-time'),
+                vel: document.getElementById('disp-vel'),
+                acc: document.getElementById('disp-acc'),
+                head: document.getElementById('disp-head')
             }
         };
 
-        // --- INITIALIZATION ---
-        function init() {
-            console.log(`Initializing viewer for Song ID: ${SONG_ID}`);
-            els.video.src = VIDEO_SRC;
+        // --- MAP SETUP ---
+        const map = L.map('map-container').setView([55.75, 12.56], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: 'OSM' }).addTo(map);
+        
+        const layers = {
+            path: L.polyline([], { color: 'blue', weight: 4 }).addTo(map),
+            marker: L.circleMarker([0,0], { color: 'red', radius: 8, fillOpacity: 1, stroke: true, weight: 2, color: 'white' }).addTo(map),
+            mediaMarkers: L.layerGroup().addTo(map)
+        };
+
+        const channel = new BroadcastChannel('gps_video_sync');
+
+        // --- LISTENERS ---
+        
+        // 1. Load JSON
+        document.getElementById('jsonInput').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if(!file) return;
+            const reader = new FileReader();
+            reader.onload = (evt) => {
+                try {
+                    const json = JSON.parse(evt.target.result);
+                    processData(json);
+                    document.getElementById('file-meta').innerText = `Pts: ${json.track_points ? json.track_points.length : 0}`;
+                } catch(err) { alert("JSON Error: " + err); }
+            };
+            reader.readAsText(file);
+        });
+
+        // 2. Load Videos
+        document.getElementById('videoInput').addEventListener('change', (e) => {
+            state.videos = Array.from(e.target.files);
+            // Sort videos by name to ensure sequence (optional)
+            state.videos.sort((a,b) => a.name.localeCompare(b.name));
+            renderPlaylist();
+            if(state.videos.length > 0) loadVideo(0);
+        });
+
+        // 3. Auto-Play Next Video
+        els.video.addEventListener('ended', () => {
+            if(state.currentVideoIdx < state.videos.length - 1) {
+                console.log("Video ended. Auto-playing next...");
+                loadVideo(state.currentVideoIdx + 1);
+            }
+        });
+
+        // 4. Time Update
+        els.video.addEventListener('timeupdate', () => {
+            const t = els.video.currentTime;
+            channel.postMessage({ time: t, source: 'video' });
+            updateVisuals(t);
+        });
+
+        // --- FUNCTIONS ---
+
+        function processData(json) {
+            state.data = json;
+            if(json.track_points && json.track_points.length > 0) {
+                const latlngs = json.track_points.map(p => [p.lat, p.lng]);
+                layers.path.setLatLngs(latlngs);
+                map.fitBounds(layers.path.getBounds());
+            }
+        }
+
+        function updateVisuals(time) {
+            if(!state.data || !state.data.track_points) return;
+            els.displays.time.innerText = time.toFixed(2);
             
-            els.video.addEventListener('loadedmetadata', () => {
-                state.localVideoLoaded = true;
-                els.debug.status.innerText = "Video Loaded";
+            // Logic to handle playlist offsetting could go here. 
+            // For now, we assume JSON time matches Video 1 time.
+            // If videos are sequential segments of one run, you need "Global Time" logic.
+            // But based on your current setup, we stick to simple file time.
+
+            const pts = state.data.track_points;
+            let currentPt = pts[0];
+
+            for(let i=0; i<pts.length; i++) {
+                if(pts[i].time <= time) currentPt = pts[i];
+                else break; 
+            }
+
+            if(currentPt) {
+                layers.marker.setLatLng([currentPt.lat, currentPt.lng]);
+                els.displays.vel.innerText = (currentPt.vel || 0).toFixed(2);
+                els.displays.acc.innerText = (currentPt.acc || 0).toFixed(2);
+                els.displays.head.innerText = (currentPt.heading || 0).toFixed(0) + "°";
+            }
+        }
+
+        function renderPlaylist() {
+            els.playlist.innerHTML = '';
+            state.videos.forEach((vid, idx) => {
+                const div = document.createElement('div');
+                div.className = 'playlist-item ' + (idx === state.currentVideoIdx ? 'active' : '');
+                div.innerText = `${idx+1}. ${vid.name}`;
+                div.onclick = () => loadVideo(idx);
+                els.playlist.appendChild(div);
             });
-
-            els.video.addEventListener('error', (e) => {
-                console.error("Video Error:", els.video.error);
-                els.debug.status.innerText = "Video Error (404?)";
-                els.debug.status.classList.add('debug-err');
-            });
-
-            // Start polling the server
-            requestAnimationFrame(syncLoop);
-            setInterval(fetchSyncData, 1000); // Fetch data every second
         }
 
-        // --- DATA FETCHING ---
-        async function fetchSyncData() {
-            try {
-                // Fetch JSON from your endpoint (adjust filename as needed)
-                const response = await fetch('/api/sync-status.json?nocache=' + Date.now());
-                if (!response.ok) throw new Error("404/Network Error");
-                
-                const data = await response.json();
-                
-                // Expecting data format: { trackStartTime: 1768158572321, isPlaying: true, lyrics: "..." }
-                
-                if (data.trackStartTime) {
-                    state.trackStartTime = parseInt(data.trackStartTime, 10);
-                }
-                
-                state.isPlaying = data.isPlaying || false;
-                
-                if (data.currentLyric) {
-                    els.lyrics.innerText = data.currentLyric;
-                }
-
-                // Log ONCE if track start changes drastically
-                // (Prevents console spam)
-                if (Math.abs(state.trackStartTime - parseInt(els.debug.trackStart.getAttribute('data-raw') || 0)) > 1000) {
-                     console.log("New Track Start detected:", state.trackStartTime);
-                     els.debug.trackStart.setAttribute('data-raw', state.trackStartTime);
-                }
-
-            } catch (err) {
-                // Silent catch to prevent console flooding, just update UI
-                els.debug.status.innerText = "Sync Fetch Fail";
-                els.debug.status.classList.add('debug-err');
-            }
+        function loadVideo(idx) {
+            state.currentVideoIdx = idx;
+            const file = state.videos[idx];
+            els.video.src = URL.createObjectURL(file);
+            renderPlaylist();
+            els.video.play().catch(e => console.log("Autoplay blocked until interaction"));
         }
-
-        // --- SYNC LOOP (Runs every frame ~60fps) ---
-        function syncLoop() {
-            // 1. Update Current Time Estimate
-            // We use Date.now() as the source of truth for "NOW"
-            const now = Date.now();
-            state.serverTime = now;
-
-            // 2. Calculate where the video SHOULD be
-            // Formula: (Current Time - Track Start Time) = Time Elapsed in ms
-            // Convert to seconds for HTML5 Video
-            let targetVideoTimeSec = 0;
-            let offsetMs = 0;
-
-            if (state.trackStartTime > 0) {
-                offsetMs = now - state.trackStartTime;
-                targetVideoTimeSec = offsetMs / 1000;
-            }
-
-            // 3. Update Debugger UI
-            updateDebugUI(now, offsetMs, targetVideoTimeSec);
-
-            // 4. Apply Logic (Only if video is loaded and we have valid data)
-            if (state.localVideoLoaded && state.trackStartTime > 0 && state.isPlaying) {
-                
-                // If video hasn't started but should have
-                if (els.video.paused) {
-                    els.video.play().catch(e => console.log("Auto-play prevented"));
-                }
-
-                // SYNC CHECK
-                // If the difference between where the video IS and where it SHOULD BE
-                // is too large, we correct it.
-                const drift = Math.abs(els.video.currentTime - targetVideoTimeSec);
-                
-                // Tolerance: If we are off by more than 0.3 seconds, snap to correct time.
-                // We don't correct for < 0.3s to avoid audio stuttering (pitch shift).
-                if (drift > 0.3) {
-                    // Safety check: Don't seek past end of video
-                    if(targetVideoTimeSec < els.video.duration) {
-                        console.log(`Resync: Drift ${drift.toFixed(2)}s. Seeking to ${targetVideoTimeSec.toFixed(2)}`);
-                        els.video.currentTime = targetVideoTimeSec;
-                    }
-                }
-            } else if (!state.isPlaying && !els.video.paused) {
-                // Pause if server says stop
-                els.video.pause();
-            }
-
-            requestAnimationFrame(syncLoop);
-        }
-
-        // --- HELPER: UI Updates ---
-        function updateDebugUI(now, offsetMs, targetVideoTimeSec) {
-            els.debug.trackStart.innerText = state.trackStartTime; // Epoch
-            els.debug.serverTime.innerText = now; // Epoch
-            
-            // Offset: Format nicely (e.g., 1200ms)
-            els.debug.offset.innerText = offsetMs + " ms";
-            if (offsetMs < 0) els.debug.offset.style.color = "red"; // Warn if negative
-            else els.debug.offset.style.color = "#0f0";
-
-            // Video Times
-            els.debug.target.innerText = targetVideoTimeSec.toFixed(3);
-            els.debug.actual.innerText = els.video.currentTime.toFixed(3);
-
-            // Drift
-            const driftMs = Math.round((els.video.currentTime - targetVideoTimeSec) * 1000);
-            els.debug.drift.innerText = driftMs + " ms";
-        }
-
-        // Start
-        init();
     </script>
 </body>
 </html>
