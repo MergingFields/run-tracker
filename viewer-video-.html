@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Viewer - Event Driven (Map + Video)</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin: 0; display: flex; height: 100vh; background: #222; color: #eee; font-family: sans-serif; }
+        
+        /* Layout */
+        #sidebar { width: 300px; background: #333; padding: 10px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
+        #main-area { flex: 1; display: flex; flex-direction: column; position: relative; }
+        
+        /* Map & Video Split */
+        #map-container { flex: 1; min-height: 50%; }
+        #video-container { flex: 1; background: #000; display: flex; justify-content: center; align-items: center; position: relative; }
+        video { height: 100%; max-width: 100%; }
+
+        /* Controls */
+        .control-group { background: #444; padding: 10px; border-radius: 4px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 12px; color: #aaa; }
+        button, input[type="file"] { width: 100%; margin-bottom: 5px; }
+        
+        /* Data Display */
+        .data-row { display: flex; justify-content: space-between; font-family: monospace; font-size: 12px; }
+        .val { color: #4fceff; }
+
+        /* Playlist */
+        .playlist-item { padding: 5px; background: #555; margin-bottom: 2px; cursor: pointer; font-size: 12px; }
+        .playlist-item.active { background: #4fceff; color: #000; }
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <div class="control-group">
+            <label>1. LOAD DATA (JSON)</label>
+            <input type="file" id="jsonInput" accept=".json">
+            <div id="file-meta" style="font-size:11px; color:#aaa;">No file loaded</div>
+        </div>
+
+        <div class="control-group">
+            <label>2. LOAD VIDEOS (Select Multiple)</label>
+            <input type="file" id="videoInput" accept="video/*" multiple>
+            <div id="playlist"></div>
+        </div>
+
+        <div class="control-group">
+            <label>LIVE DATA</label>
+            <div class="data-row"><span>Time:</span> <span id="disp-time" class="val">0.00</span></div>
+            <div class="data-row"><span>Vel:</span> <span id="disp-vel" class="val">0.00</span></div>
+            <div class="data-row"><span>Acc:</span> <span id="disp-acc" class="val">0.00</span></div>
+            <div class="data-row"><span>Heading:</span> <span id="disp-head" class="val">0</span></div>
+        </div>
+    </div>
+
+    <div id="main-area">
+        <div id="map-container" id="map"></div>
+        <div id="video-container">
+            <video id="mainVideo" controls playsinline></video>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // --- STATE ---
+        const state = {
+            data: null,      // The JSON Object
+            videos: [],      // List of video files
+            currentVideoIdx: 0,
+            isPlaying: false
+        };
+
+        // --- ELEMENTS ---
+        const els = {
+            video: document.getElementById('mainVideo'),
+            map: document.getElementById('map-container'),
+            playlist: document.getElementById('playlist'),
+            displays: {
+                time: document.getElementById('disp-time'),
+                vel: document.getElementById('disp-vel'),
+                acc: document.getElementById('disp-acc'),
+                head: document.getElementById('disp-head')
+            }
+        };
+
+        // --- MAP SETUP ---
+        const map = L.map('map-container').setView([55.75, 12.56], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: 'OSM' }).addTo(map);
+        
+        // Layers
+        const layers = {
+            path: L.polyline([], { color: 'blue', weight: 4 }).addTo(map),
+            marker: L.circleMarker([0,0], { color: 'red', radius: 6, fillOpacity: 1 }).addTo(map),
+            mediaMarkers: L.layerGroup().addTo(map) // For photos/other media
+        };
+
+        // --- SYNC CHANNEL ---
+        const channel = new BroadcastChannel('gps_video_sync');
+
+        // --- EVENT LISTENERS ---
+        
+        // 1. Load JSON
+        document.getElementById('jsonInput').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if(!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = (evt) => {
+                try {
+                    const json = JSON.parse(evt.target.result);
+                    processData(json);
+                    document.getElementById('file-meta').innerText = `Date: ${json.date} | Pts: ${json.track_points.length}`;
+                } catch(err) { alert("JSON Error: " + err); }
+            };
+            reader.readAsText(file);
+        });
+
+        // 2. Load Videos
+        document.getElementById('videoInput').addEventListener('change', (e) => {
+            state.videos = Array.from(e.target.files);
+            renderPlaylist();
+            if(state.videos.length > 0) loadVideo(0);
+        });
+
+        // 3. Video Time Update (THE CORE LOOP)
+        els.video.addEventListener('timeupdate', () => {
+            const t = els.video.currentTime;
+            
+            // Broadcast
+            channel.postMessage({ time: t, source: 'video' });
+            
+            // Update UI
+            updateVisuals(t);
+        });
+
+        // 4. Listen for Broadcasts (Multi-window sync)
+        channel.onmessage = (ev) => {
+            if(ev.data.source !== 'video') { // Don't listen to yourself
+                // If drift is large, seek.
+                if(Math.abs(els.video.currentTime - ev.data.time) > 0.5) {
+                    els.video.currentTime = ev.data.time;
+                }
+            }
+        };
+
+        // --- FUNCTIONS ---
+
+        function processData(json) {
+            state.data = json;
+            
+            // 1. Draw Path
+            if(json.track_points && json.track_points.length > 0) {
+                const latlngs = json.track_points.map(p => [p.lat, p.lng]);
+                layers.path.setLatLngs(latlngs);
+                map.fitBounds(layers.path.getBounds());
+            }
+
+            // 2. Plot Photos (if any)
+            layers.mediaMarkers.clearLayers();
+            if(json.photos && json.photos.length > 0) {
+                json.photos.forEach(photo => {
+                    // Assuming photo has lat/lng/url
+                    L.marker([photo.lat, photo.lng])
+                     .bindPopup(`<img src="${photo.url}" width="100">`)
+                     .addTo(layers.mediaMarkers);
+                });
+            }
+        }
+
+        function updateVisuals(time) {
+            if(!state.data || !state.data.track_points) return;
+            
+            els.displays.time.innerText = time.toFixed(2);
+
+            // Find closest point (Simple loop - can be optimized to Binary Search for huge files)
+            // Note: Your JSON 'time' matches video 'currentTime'
+            const pts = state.data.track_points;
+            let currentPt = pts[0];
+
+            for(let i=0; i<pts.length; i++) {
+                if(pts[i].time <= time) {
+                    currentPt = pts[i];
+                } else {
+                    break; 
+                }
+            }
+
+            if(currentPt) {
+                // Move Marker
+                layers.marker.setLatLng([currentPt.lat, currentPt.lng]);
+                
+                // Update Text Data
+                els.displays.vel.innerText = (currentPt.vel || 0).toFixed(2);
+                els.displays.acc.innerText = (currentPt.acc || 0).toFixed(2);
+                els.displays.head.innerText = (currentPt.heading || 0).toFixed(0) + "°";
+            }
+        }
+
+        function renderPlaylist() {
+            els.playlist.innerHTML = '';
+            state.videos.forEach((vid, idx) => {
+                const div = document.createElement('div');
+                div.className = 'playlist-item ' + (idx === state.currentVideoIdx ? 'active' : '');
+                div.innerText = vid.name;
+                div.onclick = () => loadVideo(idx);
+                els.playlist.appendChild(div);
+            });
+        }
+
+        function loadVideo(idx) {
+            state.currentVideoIdx = idx;
+            const file = state.videos[idx];
+            els.video.src = URL.createObjectURL(file);
+            renderPlaylist();
+        }
+
+    </script>
+</body>
+</html>

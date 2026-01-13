@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Video Viewer - Robust Sync</title>
+    <style>
+        body {
+            margin: 0;
+            background: #000;
+            color: #fff;
+            font-family: monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #video-container {
+            position: relative;
+            width: 80%;
+            max-width: 1000px;
+            border: 2px solid #333;
+            background: #111;
+        }
+
+        video {
+            width: 100%;
+            display: block;
+        }
+
+        /* Overlay for lyrics or future drawing canvas */
+        #overlay-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* Let clicks pass through to video controls */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #lyric-display {
+            font-size: 2em;
+            text-align: center;
+            text-shadow: 2px 2px 4px #000;
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.4);
+        }
+
+        /* Debug Box Styling */
+        #debug-box {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.85);
+            border: 1px solid #444;
+            padding: 10px;
+            font-size: 12px;
+            z-index: 9999;
+            width: 300px;
+            pointer-events: auto;
+        }
+
+        .debug-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 4px;
+            border-bottom: 1px solid #333;
+        }
+
+        .debug-label { color: #aaa; }
+        .debug-val { color: #0f0; font-weight: bold; }
+        .debug-err { color: #f55; }
+    </style>
+</head>
+<body>
+
+    <div id="debug-box">
+        <div style="text-align:center; margin-bottom:5px; color:#fff;">DEBUGGER</div>
+        <div class="debug-row"><span class="debug-label">Status:</span><span id="dbg-status" class="debug-val">Init</span></div>
+        <div class="debug-row"><span class="debug-label">Track Start (Epoch):</span><span id="dbg-track-start" class="debug-val">0</span></div>
+        <div class="debug-row"><span class="debug-label">Server Time (Epoch):</span><span id="dbg-server-time" class="debug-val">0</span></div>
+        <div class="debug-row"><span class="debug-label">Calculated Offset (ms):</span><span id="dbg-offset" class="debug-val">0</span></div>
+        <div class="debug-row"><span class="debug-label">Video Target (sec):</span><span id="dbg-vid-target" class="debug-val">0.00</span></div>
+        <div class="debug-row"><span class="debug-label">Video Actual (sec):</span><span id="dbg-vid-actual" class="debug-val">0.00</span></div>
+        <div class="debug-row"><span class="debug-label">Drift (ms):</span><span id="dbg-drift" class="debug-val">0</span></div>
+    </div>
+
+    <div id="video-container">
+        <video id="main-video" controls playsinline>
+            Your browser does not support the video tag.
+        </video>
+        <div id="overlay-layer">
+            <div id="lyric-display">Waiting for sync...</div>
+        </div>
+    </div>
+
+    <script>
+        // --- CONFIGURATION ---
+        const urlParams = new URLSearchParams(window.location.search);
+        const SONG_ID = urlParams.get('songId') || '15A01'; // Default if missing
+        
+        // This should match the filename structure on your server
+        const VIDEO_SRC = `/media/videos/${SONG_ID}.mp4`; 
+        
+        // --- STATE ---
+        const state = {
+            trackStartTime: 0,   // Epoch ms when the track supposedly started
+            serverTime: 0,       // Current Epoch ms from server
+            isPlaying: false,    // Is the global state "playing"?
+            localVideoLoaded: false
+        };
+
+        const els = {
+            video: document.getElementById('main-video'),
+            lyrics: document.getElementById('lyric-display'),
+            debug: {
+                status: document.getElementById('dbg-status'),
+                trackStart: document.getElementById('dbg-track-start'),
+                serverTime: document.getElementById('dbg-server-time'),
+                offset: document.getElementById('dbg-offset'),
+                target: document.getElementById('dbg-vid-target'),
+                actual: document.getElementById('dbg-vid-actual'),
+                drift: document.getElementById('dbg-drift'),
+            }
+        };
+
+        // --- INITIALIZATION ---
+        function init() {
+            console.log(`Initializing viewer for Song ID: ${SONG_ID}`);
+            els.video.src = VIDEO_SRC;
+            
+            els.video.addEventListener('loadedmetadata', () => {
+                state.localVideoLoaded = true;
+                els.debug.status.innerText = "Video Loaded";
+            });
+
+            els.video.addEventListener('error', (e) => {
+                console.error("Video Error:", els.video.error);
+                els.debug.status.innerText = "Video Error (404?)";
+                els.debug.status.classList.add('debug-err');
+            });
+
+            // Start polling the server
+            requestAnimationFrame(syncLoop);
+            setInterval(fetchSyncData, 1000); // Fetch data every second
+        }
+
+        // --- DATA FETCHING ---
+        async function fetchSyncData() {
+            try {
+                // Fetch JSON from your endpoint (adjust filename as needed)
+                const response = await fetch('/api/sync-status.json?nocache=' + Date.now());
+                if (!response.ok) throw new Error("404/Network Error");
+                
+                const data = await response.json();
+                
+                // Expecting data format: { trackStartTime: 1768158572321, isPlaying: true, lyrics: "..." }
+                
+                if (data.trackStartTime) {
+                    state.trackStartTime = parseInt(data.trackStartTime, 10);
+                }
+                
+                state.isPlaying = data.isPlaying || false;
+                
+                if (data.currentLyric) {
+                    els.lyrics.innerText = data.currentLyric;
+                }
+
+                // Log ONCE if track start changes drastically
+                // (Prevents console spam)
+                if (Math.abs(state.trackStartTime - parseInt(els.debug.trackStart.getAttribute('data-raw') || 0)) > 1000) {
+                     console.log("New Track Start detected:", state.trackStartTime);
+                     els.debug.trackStart.setAttribute('data-raw', state.trackStartTime);
+                }
+
+            } catch (err) {
+                // Silent catch to prevent console flooding, just update UI
+                els.debug.status.innerText = "Sync Fetch Fail";
+                els.debug.status.classList.add('debug-err');
+            }
+        }
+
+        // --- SYNC LOOP (Runs every frame ~60fps) ---
+        function syncLoop() {
+            // 1. Update Current Time Estimate
+            // We use Date.now() as the source of truth for "NOW"
+            const now = Date.now();
+            state.serverTime = now;
+
+            // 2. Calculate where the video SHOULD be
+            // Formula: (Current Time - Track Start Time) = Time Elapsed in ms
+            // Convert to seconds for HTML5 Video
+            let targetVideoTimeSec = 0;
+            let offsetMs = 0;
+
+            if (state.trackStartTime > 0) {
+                offsetMs = now - state.trackStartTime;
+                targetVideoTimeSec = offsetMs / 1000;
+            }
+
+            // 3. Update Debugger UI
+            updateDebugUI(now, offsetMs, targetVideoTimeSec);
+
+            // 4. Apply Logic (Only if video is loaded and we have valid data)
+            if (state.localVideoLoaded && state.trackStartTime > 0 && state.isPlaying) {
+                
+                // If video hasn't started but should have
+                if (els.video.paused) {
+                    els.video.play().catch(e => console.log("Auto-play prevented"));
+                }
+
+                // SYNC CHECK
+                // If the difference between where the video IS and where it SHOULD BE
+                // is too large, we correct it.
+                const drift = Math.abs(els.video.currentTime - targetVideoTimeSec);
+                
+                // Tolerance: If we are off by more than 0.3 seconds, snap to correct time.
+                // We don't correct for < 0.3s to avoid audio stuttering (pitch shift).
+                if (drift > 0.3) {
+                    // Safety check: Don't seek past end of video
+                    if(targetVideoTimeSec < els.video.duration) {
+                        console.log(`Resync: Drift ${drift.toFixed(2)}s. Seeking to ${targetVideoTimeSec.toFixed(2)}`);
+                        els.video.currentTime = targetVideoTimeSec;
+                    }
+                }
+            } else if (!state.isPlaying && !els.video.paused) {
+                // Pause if server says stop
+                els.video.pause();
+            }
+
+            requestAnimationFrame(syncLoop);
+        }
+
+        // --- HELPER: UI Updates ---
+        function updateDebugUI(now, offsetMs, targetVideoTimeSec) {
+            els.debug.trackStart.innerText = state.trackStartTime; // Epoch
+            els.debug.serverTime.innerText = now; // Epoch
+            
+            // Offset: Format nicely (e.g., 1200ms)
+            els.debug.offset.innerText = offsetMs + " ms";
+            if (offsetMs < 0) els.debug.offset.style.color = "red"; // Warn if negative
+            else els.debug.offset.style.color = "#0f0";
+
+            // Video Times
+            els.debug.target.innerText = targetVideoTimeSec.toFixed(3);
+            els.debug.actual.innerText = els.video.currentTime.toFixed(3);
+
+            // Drift
+            const driftMs = Math.round((els.video.currentTime - targetVideoTimeSec) * 1000);
+            els.debug.drift.innerText = driftMs + " ms";
+        }
+
+        // Start
+        init();
+    </script>
+</body>
+</html>
