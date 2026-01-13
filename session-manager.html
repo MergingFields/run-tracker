@@ -3,14 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Session Manager V9</title>
+    <title>Session Manager V10</title>
     <style>
         body { background: #111; color: #eee; font-family: system-ui; padding: 20px; }
         h1 { border-bottom: 1px solid #333; padding-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
         .version-tag { font-size: 12px; background: #333; padding: 5px 10px; border-radius: 10px; color: #aaa; }
-        
         .session-card { background: #222; border: 1px solid #333; border-radius: 8px; padding: 15px; margin-bottom: 15px; }
-        .meta { color: #aaa; font-size: 14px; margin-bottom: 10px; }
         .stats { display: flex; gap: 15px; font-size: 12px; font-family: monospace; color: #4fceff; margin-bottom: 15px; }
         .btn-group { display: flex; gap: 10px; }
         button { flex: 1; padding: 10px; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; }
@@ -18,140 +16,119 @@
         .btn-vid { background: #ff4444; color: #fff; }
         .btn-del { background: #333; color: #aaa; max-width: 50px; }
         .back-link { display: inline-block; margin-bottom: 20px; color: #aaa; text-decoration: none; }
-        
-        .reset-section { margin-top: 50px; border-top: 1px solid #333; padding-top: 20px; text-align: center; }
-        .btn-reset { background: #000; border: 1px solid red; color: red; padding: 15px; width: 100%; }
-        .empty-msg { text-align: center; color: #555; margin-top: 30px; }
+        .btn-reset { background: #000; border: 1px solid red; color: red; padding: 15px; width: 100%; margin-top:50px; }
     </style>
 </head>
 <body>
     <a href="index.html" class="back-link">← Back to Menu</a>
-    
-    <h1>
-        Saved Sessions
-        <span class="version-tag">Manager V9 (v103)</span>
-    </h1>
-    
+    <h1>Saved Sessions <span class="version-tag">Manager V10 (v104)</span></h1>
     <div id="list">Loading...</div>
-
-    <div class="reset-section">
-        <button class="btn-reset" onclick="nukeDB()">⚠️ RESET DATABASE</button>
-    </div>
+    <div style="text-align:center"><button class="btn-reset" onclick="nukeDB()">⚠️ RESET DATABASE</button></div>
 
     <script>
         const list = document.getElementById('list');
-
-        // --- CONNECT TO V103 ---
-        const request = indexedDB.open("RunTrackerDB", 103);
+        const request = indexedDB.open("RunTrackerDB", 104);
         
         request.onsuccess = function(e) {
             const db = e.target.result;
-            if(!db.objectStoreNames.contains("sessions")) {
-                list.innerHTML = "<div class='empty-msg'>Database connected (v103), but no sessions found.<br>Record a new run!</div>";
-                return;
-            }
+            if(!db.objectStoreNames.contains("sessions")) { list.innerHTML = "No sessions found."; return; }
             loadSessions(db);
         };
-
-        request.onerror = function(e) {
-            console.error(e);
-            list.innerHTML = `<div style="color:red">Error opening DB v103: ${e.target.error}</div>`;
-        };
+        request.onerror = e => list.innerHTML = "DB Error: " + e.target.error;
 
         function loadSessions(db) {
-            try {
-                const tx = db.transaction("sessions", "readonly");
-                const store = tx.objectStore("sessions");
-                const req = store.getAll();
+            const tx = db.transaction("sessions", "readonly");
+            const req = tx.objectStore("sessions").getAll();
 
-                req.onsuccess = function() {
-                    const runs = req.result;
-                    if(runs.length === 0) { list.innerHTML = "<div class='empty-msg'>No runs saved yet.</div>"; return; }
-                    runs.sort((a,b) => new Date(b.date) - new Date(a.date));
+            req.onsuccess = function() {
+                const runs = req.result;
+                if(runs.length === 0) { list.innerHTML = "No runs saved."; return; }
+                runs.sort((a,b) => new Date(b.date) - new Date(a.date));
+                list.innerHTML = '';
+                
+                runs.forEach(run => {
+                    const date = new Date(run.date).toLocaleString();
+                    const vids = run.videoData || [];
+                    const vidLabel = vids.length > 0 ? `${vids.length} Clips` : "None";
                     
-                    list.innerHTML = '';
-                    runs.forEach(run => {
-                        const date = new Date(run.date).toLocaleString();
-                        
-                        // Handle both old (videoBlob) and new (videos array)
-                        let vidCount = 0;
-                        let totalSize = 0;
-                        if(run.videos && Array.isArray(run.videos)) {
-                            vidCount = run.videos.length;
-                            run.videos.forEach(v => totalSize += v.size);
-                        } else if(run.videoBlob) {
-                            vidCount = 1;
-                            totalSize = run.videoBlob.size;
-                        }
-
-                        const vidLabel = vidCount > 0 ? `${(totalSize/1024/1024).toFixed(1)}MB` : "None";
-                        const vidBtnText = vidCount > 1 ? `VIDEOS (${vidCount})` : "VIDEO";
-                        
-                        const div = document.createElement('div');
-                        div.className = 'session-card';
-                        div.innerHTML = `
-                            <div class="meta">${date}</div>
-                            <div class="stats">
-                                <span>⏱ ${Math.floor(run.duration/60)}:${(run.duration%60).toString().padStart(2,'0')}</span>
-                                <span>📸 ${run.photos ? run.photos.length : 0}</span>
-                                <span>💾 ${vidLabel}</span>
-                            </div>
-                            <div class="btn-group">
-                                <button class="btn-json" onclick="downloadJSON(${run.id})">DATA</button>
-                                ${vidCount > 0 ? `<button class="btn-vid" onclick="downloadVideo(${run.id})">${vidBtnText}</button>` : ''}
-                                <button class="btn-del" onclick="deleteRun(${run.id})">🗑</button>
-                            </div>
-                        `;
-                        list.appendChild(div);
-                    });
-                };
-            } catch(err) {
-                list.innerHTML = "Transaction Error: " + err.message;
-            }
+                    const div = document.createElement('div');
+                    div.className = 'session-card';
+                    div.innerHTML = `
+                        <div style="color:#aaa; font-size:14px; margin-bottom:10px;">${date}</div>
+                        <div class="stats">
+                            <span>⏱ ${Math.floor(run.duration/60)}:${(run.duration%60).toString().padStart(2,'0')}</span>
+                            <span>📸 ${run.photos.length}</span>
+                            <span>💾 ${vidLabel}</span>
+                        </div>
+                        <div class="btn-group">
+                            <button class="btn-json" onclick="downloadJSON(${run.id})">JSON (Linked)</button>
+                            ${vids.length > 0 ? `<button class="btn-vid" onclick="downloadVideos(${run.id})">VIDEOS</button>` : ''}
+                            <button class="btn-del" onclick="deleteRun(${run.id})">🗑</button>
+                        </div>
+                    `;
+                    list.appendChild(div);
+                });
+            };
         }
 
         function downloadJSON(id) {
             useDB(store => {
                 store.get(id).onsuccess = e => {
-                    // Exclude video blobs from JSON file to keep it small
-                    const { videoBlob, videos, ...data } = e.target.result; 
-                    const url = URL.createObjectURL(new Blob([JSON.stringify(data,null,2)], {type:'application/json'}));
-                    const a = document.createElement('a'); a.href=url; a.download=`Run_${data.date}.json`; a.click();
+                    const rawData = e.target.result;
+                    
+                    // --- SMART EXPORT LOGIC ---
+                    // 1. Create a clean list of videos (Filename + Times Only)
+                    // 2. Remove the heavy Blobs
+                    const cleanVideos = (rawData.videoData || []).map(v => ({
+                        filename: v.filename,
+                        startTime: v.startTime,
+                        endTime: v.endTime,
+                        // NO BLOB HERE
+                    }));
+
+                    const exportData = {
+                        ...rawData,
+                        videoData: cleanVideos // Replace big array with light array
+                    };
+                    
+                    // Remove legacy fields if they exist
+                    delete exportData.videoBlob; 
+                    delete exportData.videos;
+
+                    const url = URL.createObjectURL(new Blob([JSON.stringify(exportData,null,2)], {type:'application/json'}));
+                    const a = document.createElement('a'); a.href=url; 
+                    const safeDate = rawData.date.replace(/:/g, '-').split('.')[0];
+                    a.download = `Run_${safeDate}.json`; 
+                    a.click();
                 };
             });
         }
 
-        function downloadVideo(id) {
+        function downloadVideos(id) {
             useDB(store => {
                 store.get(id).onsuccess = e => {
-                    const data = e.target.result;
+                    const vids = e.target.result.videoData || [];
+                    if(vids.length === 0) return alert("No videos.");
                     
-                    // HANDLE ARRAY (V9+)
-                    if(data.videos && Array.isArray(data.videos)) {
-                        data.videos.forEach((blob, index) => {
-                            const url = URL.createObjectURL(blob);
+                    alert(`Downloading ${vids.length} videos. Please allow multiple downloads.`);
+                    
+                    vids.forEach((v, i) => {
+                        setTimeout(() => {
+                            const url = URL.createObjectURL(v.blob);
                             const a = document.createElement('a'); 
                             a.href = url; 
-                            a.download = `RunVideo_${index+1}_${data.date}.mp4`; 
+                            // USE THE EXACT SAME NAME AS IN JSON
+                            a.download = v.filename; 
                             a.click();
-                        });
-                        return;
-                    }
-
-                    // HANDLE SINGLE BLOB (V8)
-                    if(data.videoBlob) {
-                        const url = URL.createObjectURL(data.videoBlob);
-                        const a = document.createElement('a'); a.href=url; a.download=`RunVideo_${data.date}.mp4`; a.click();
-                    } else {
-                        alert("No video found.");
-                    }
+                        }, i * 1000); // 1 second delay between downloads to prevent browser blocking
+                    });
                 };
             });
         }
 
         function deleteRun(id) {
             if(!confirm("Delete?")) return;
-            const req = indexedDB.open("RunTrackerDB", 103);
+            const req = indexedDB.open("RunTrackerDB", 104);
             req.onsuccess = e => {
                 const tx = e.target.result.transaction("sessions", "readwrite");
                 tx.objectStore("sessions").delete(id);
@@ -160,13 +137,12 @@
         }
 
         function nukeDB() {
-            if(!confirm("DELETE ALL DATA?")) return;
-            const req = indexedDB.deleteDatabase("RunTrackerDB");
-            req.onsuccess = () => { alert("Reset Complete."); window.location.reload(); };
+            if(!confirm("DELETE ALL?")) return;
+            indexedDB.deleteDatabase("RunTrackerDB").onsuccess = () => window.location.reload();
         }
 
         function useDB(cb) {
-            const req = indexedDB.open("RunTrackerDB", 103);
+            const req = indexedDB.open("RunTrackerDB", 104);
             req.onsuccess = e => cb(e.target.result.transaction("sessions", "readonly").objectStore("sessions"));
         }
     </script>
